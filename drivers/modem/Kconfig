@@ -47,6 +47,7 @@ config MODEM_SHELL
 	  sending a command to the modem UART.
 
 source "drivers/modem/Kconfig.ublox-sara-r4"
+source "drivers/modem/Kconfig.ec20"
 source "drivers/modem/Kconfig.wncm14a2a"
 
 endif # MODEM

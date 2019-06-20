@@ -8,6 +8,11 @@ if(CONFIG_MODEM_UBLOX_SARA_R4)
 	zephyr_library_sources(ublox-sara-r4.c)
 endif()
 
+if(CONFIG_MODEM_EC20)
+	zephyr_library_include_directories(${ZEPHYR_BASE}/subsys/net/ip)
+	zephyr_library_sources(ec20.c)
+endif()
+
 if(CONFIG_MODEM_WNCM14A2A)
 	zephyr_library_include_directories(${ZEPHYR_BASE}/subsys/net/ip)
 	zephyr_library_sources(wncm14a2a.c)
