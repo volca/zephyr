@@ -88,7 +88,6 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define MDM_RECV_MAX_BUF		30
 #define MDM_RECV_BUF_SIZE		128
-#define MDM_CMD_BUF_SIZE		128
 
 #define MDM_MAX_SOCKETS			11
 #define MDM_BASE_SOCKET_NUM		0
@@ -116,7 +115,6 @@ NET_BUF_POOL_DEFINE(mdm_recv_pool, MDM_RECV_MAX_BUF, MDM_RECV_BUF_SIZE,
 		    0, NULL);
 
 static u8_t mdm_recv_buf[MDM_MAX_DATA_LENGTH];
-static char mdm_cmd_buf[MDM_CMD_BUF_SIZE];
 
 /* RX thread structures */
 K_THREAD_STACK_DEFINE(modem_rx_stack,
@@ -321,7 +319,7 @@ static int send_at_cmd(struct modem_socket *sock,
 
 	ictx.last_error = 0;
 
-	LOG_DBG("OUT: [%s]", data);
+	LOG_DBG("-->: [%s]", log_strdup(data));
 	mdm_receiver_send(&ictx.mdm_ctx, data, strlen(data));
 	mdm_receiver_send(&ictx.mdm_ctx, "\r\n", 2);
 
@@ -598,7 +596,7 @@ static void on_cmd_atcmdecho_nosock_sim(struct net_buf **buf, u16_t len)
 				    sizeof(sim) - 1,
 				    *buf, 0, len);
 	sim[out_len] = 0;
-	LOG_INF("SIM: %s", sim);
+	LOG_INF("SIM: %s", log_strdup(sim));
 }
 
 static void on_cmd_atcmdecho_nosock_imei(struct net_buf **buf, u16_t len)
@@ -1190,7 +1188,7 @@ static void modem_rx(void)
 
             memcpy(tmp, rx_buf->data, rx_buf->len);
             tmp[rx_buf->len] = 0;
-            LOG_INF("rbuf %d %s ", rx_buf->len, log_strdup(tmp));
+            LOG_INF("<-- %s (len:%u)", log_strdup(tmp), rx_buf->len);
 			/* look for matching data handlers */
 			i = -1;
 			for (i = 0; i < ARRAY_SIZE(handlers); i++) {
@@ -1370,7 +1368,6 @@ restart:
 		LOG_ERR("AT+GSN ret:%d", ret);
 		goto error;
 	}
-    k_sleep(K_SECONDS(2));
 
 	/* query sim card */
 	LOG_INF("Querying sim card");
@@ -1419,6 +1416,17 @@ restart:
 	counter = 0;
 	while (counter++ < 20 && ictx.ev_creg != 1) {
 		k_sleep(K_SECONDS(1));
+	}
+
+    ret = send_at_cmd(NULL, "AT+QIDEACT=1", MDM_CMD_TIMEOUT);
+    if (ret < 0) {
+		LOG_ERR("AT+QIDEACT ret:%d", ret);
+	}
+    k_sleep(K_SECONDS(1));
+
+    ret = send_at_cmd(NULL, "AT+QIACT=1", MDM_CMD_TIMEOUT);
+    if (ret < 0) {
+		LOG_ERR("AT+QIACT=1 ret:%d", ret);
 	}
 
 	/* query modem RSSI */
@@ -1533,13 +1541,6 @@ static int offload_get(sa_family_t family,
 	int ret;
 	struct modem_socket *sock = NULL;
 
-    strcpy(mdm_cmd_buf, "AT+QIDEACT=1");
-    ret = send_at_cmd(NULL, mdm_cmd_buf, MDM_CMD_TIMEOUT);
-    if (ret < 0) {
-		LOG_ERR("%s ret:%d", mdm_cmd_buf, ret);
-	}
-	k_sleep(K_SECONDS(1));
-
 	/* new socket */
 	sock = socket_get();
 	if (!sock) {
@@ -1555,10 +1556,9 @@ static int offload_get(sa_family_t family,
     // TODO
 	sock->socket_id = 0;
 
-    strcpy(mdm_cmd_buf, "AT+QIACT=1");
-    ret = send_at_cmd(NULL, mdm_cmd_buf, MDM_CMD_TIMEOUT);
+    ret = send_at_cmd(NULL, "AT", MDM_CMD_TIMEOUT);
     if (ret < 0) {
-		LOG_ERR("%s ret:%d",log_strdup(mdm_cmd_buf), ret);
+		LOG_ERR("AT ret:%d", ret);
 		socket_put(sock);
 	}
 
