@@ -350,7 +350,9 @@ static int send_data(struct modem_socket *sock,
 {
 	int ret, i;
 	struct net_buf *frag;
-	char buf[sizeof("AT+USO**=#,!###.###.###.###!,#####,####\r\n")];
+	char buf[sizeof("AT+QIOPEN=1,##,###,###.###.###.###,#####,#####,#\r")];
+    // TODO
+    int context_id = 1;
 
 	if (!sock) {
 		return -EINVAL;
@@ -360,16 +362,26 @@ static int send_data(struct modem_socket *sock,
 
 	frag = pkt->frags;
 
+    /* send AT commands(AT+QIOPEN=<contextID>,<socket>,"<TCP/UDP>","<IP_address>/<domain_name>", */
+    /* <remote_port>,<local_port>,<access_mode>) to connect TCP server */
+    /* contextID   = 1 : use same contextID as AT+QICSGP & AT+QIACT */
+    /* local_port  = 0 : local port assigned automatically */
+    /* access_mode = 1 : Direct push mode */
 	/* use SOCKWRITE with binary mode formatting */
-	if (sock->ip_proto == IPPROTO_UDP) {
-		snprintk(buf, sizeof(buf), "AT+USOST=%d,\"%s\",%u,%u\r\n",
-			 sock->socket_id, modem_sprint_ip_addr(dst_addr),
-			 dst_port, net_buf_frags_len(frag));
-	} else {
-		snprintk(buf, sizeof(buf), "AT+USOWR=%d,%u\r\n",
-			 sock->socket_id, net_buf_frags_len(frag));
-	}
-	mdm_receiver_send(&ictx.mdm_ctx, buf, strlen(buf));
+    snprintk(buf, sizeof(buf), "AT+QIOPEN=%d,%d,\"UDP\",\"%s\",%d,0,1", 
+         context_id, sock->socket_id,
+         modem_sprint_ip_addr(dst_addr), 
+         dst_port);
+
+	ret = send_at_cmd(sock, buf, MDM_CMD_TIMEOUT);
+    LOG_WRN("dns %s", log_strdup(buf));
+
+	k_sleep(MDM_PROMPT_CMD_DELAY);
+
+    char buf1[128];
+    snprintk(buf1, sizeof(buf1), "AT+QISEND=%d,%d\r\n", 
+         sock->socket_id, net_buf_frags_len(frag));
+	mdm_receiver_send(&ictx.mdm_ctx, buf1, strlen(buf1));
 
 	/* Slight pause per spec so that @ prompt is received */
 	k_sleep(MDM_PROMPT_CMD_DELAY);
@@ -398,6 +410,9 @@ static int send_data(struct modem_socket *sock,
 	} else if (ret == -EAGAIN) {
 		ret = -ETIMEDOUT;
 	}
+
+	ret = send_at_cmd(sock, "AT+QISEND=0,0", MDM_CMD_TIMEOUT);
+    LOG_WRN("resp %s", log_strdup(buf));
 
 	return ret;
 }
@@ -555,15 +570,14 @@ static void on_cmd_atcmdecho_nosock_ready(struct net_buf **buf, u16_t len)
 }
 
 
+static void on_cmd_atcmdinfo(struct net_buf **buf, u16_t len)
+{
+}
+
 static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 {
-	size_t out_len;
-
-	out_len = net_buf_linearize(ictx.mdm_manufacturer,
-				    sizeof(ictx.mdm_manufacturer) - 1,
-				    *buf, 0, len);
-	ictx.mdm_manufacturer[out_len] = 0;
-	LOG_INF("Manufacturer: %s", ictx.mdm_manufacturer);
+    strcpy(ictx.mdm_manufacturer, "Quectel");
+	LOG_INF("Manufacturer: %s", log_strdup(ictx.mdm_manufacturer));
 }
 
 static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
@@ -574,7 +588,7 @@ static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 				    sizeof(ictx.mdm_model) - 1,
 				    *buf, 0, len);
 	ictx.mdm_model[out_len] = 0;
-	LOG_INF("Model: %s", ictx.mdm_model);
+	LOG_INF("Model: EC20%s", ictx.mdm_model);
 }
 
 static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
@@ -588,15 +602,15 @@ static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
 	LOG_INF("Revision: %s", log_strdup(ictx.mdm_revision));
 }
 
-static char sim[128];
 static void on_cmd_atcmdecho_nosock_sim(struct net_buf **buf, u16_t len)
 {
 	size_t out_len;
-	out_len = net_buf_linearize(sim,
-				    sizeof(sim) - 1,
+    char rsp[10];
+	out_len = net_buf_linearize(rsp,
+				    sizeof(rsp) - 1,
 				    *buf, 0, len);
-	sim[out_len] = 0;
-	LOG_INF("SIM: %s", log_strdup(sim));
+	rsp[out_len] = 0;
+	LOG_INF("SIM: %s", log_strdup(rsp));
 }
 
 static void on_cmd_atcmdecho_nosock_imei(struct net_buf **buf, u16_t len)
@@ -604,6 +618,7 @@ static void on_cmd_atcmdecho_nosock_imei(struct net_buf **buf, u16_t len)
 	struct net_buf *frag = NULL;
 	u16_t offset;
 	size_t out_len;
+
 
 	/* make sure IMEI data is received */
 	if (len < MDM_IMEI_LENGTH) {
@@ -683,11 +698,6 @@ static void on_cmd_atcmdinfo_rssi(struct net_buf **buf, u16_t len)
 
 	LOG_WRN("Bad format found for RSSI");
 	ictx.mdm_ctx.data_rssi = -1000;
-}
-
-static void on_cmd_atcmdinfo_net_op(struct net_buf **buf, u16_t len)
-{
-
 }
 
 /* Handler: OK */
@@ -1129,11 +1139,10 @@ static void modem_rx(void)
 		CMD_HANDLER("AT+CFUN=", atcmdecho_nosock),
 		CMD_HANDLER("AT+CREG=", atcmdecho_nosock),
 		CMD_HANDLER("AT+UDCONF=", atcmdecho_nosock),
-		CMD_HANDLER("ATI", atcmdecho_nosock),
 		CMD_HANDLER("AT+COPS=", atcmdecho_nosock),
 		CMD_HANDLER("AT+CSQ", atcmdecho_nosock),
 		CMD_HANDLER("AT+USOCR=", atcmdecho_nosock),
-		CMD_HANDLER("AT+GSN", atcmdecho_nosock_imei),
+		CMD_HANDLER("AT+CGSN", atcmdecho_nosock_imei),
 		CMD_HANDLER("+CPIN: ", atcmdecho_nosock_sim),
 		CMD_HANDLER("READY", atcmdecho_nosock_ready),
 
@@ -1144,21 +1153,22 @@ static void modem_rx(void)
 		CMD_HANDLER("AT+USOCL=", atcmdecho),
 
 		/* MODEM Information */
-		CMD_HANDLER("Manufacturer: ", atcmdinfo_manufacturer),
-		CMD_HANDLER("Model: ", atcmdinfo_model),
+		CMD_HANDLER("ATI", atcmdinfo),
+		CMD_HANDLER("Quectel", atcmdinfo_manufacturer),
+		CMD_HANDLER("EC20", atcmdinfo_model),
 		CMD_HANDLER("Revision: ", atcmdinfo_revision),
 		CMD_HANDLER("+CSQ: ", atcmdinfo_rssi),
-		CMD_HANDLER("+COPS: ", atcmdinfo_net_op),
 
 		/* SOLICITED SOCKET RESPONSES */
 		CMD_HANDLER("OK", sockok),
-		CMD_HANDLER("ERROR", sockerror),
+		CMD_HANDLER("SEND OK", sockok),
 		CMD_HANDLER("ERROR", sockerror),
 		CMD_HANDLER("+USOCR: ", sockcreate),
 		CMD_HANDLER("+USOWR: ", sockwrite),
-		CMD_HANDLER("+USOST: ", sockwrite),
+		//CMD_HANDLER("+QISEND: ", sockwrite),
 		CMD_HANDLER("+USORD: ", sockread_tcp),
 		CMD_HANDLER("+USORF: ", sockread_udp),
+		CMD_HANDLER("SEND OK", sockread_udp),
 
 		/* UNSOLICITED RESPONSE CODES */
 		CMD_HANDLER("+UUSOCL: ", socknotifyclose),
@@ -1363,9 +1373,9 @@ restart:
     k_sleep(K_SECONDS(1));
 
 	/* query modem IMEI */
-	ret = send_at_cmd(NULL, "AT+GSN", MDM_CMD_TIMEOUT);
+	ret = send_at_cmd(NULL, "AT+CGSN", MDM_CMD_TIMEOUT);
 	if (ret < 0) {
-		LOG_ERR("AT+GSN ret:%d", ret);
+		LOG_ERR("AT+CGSN ret:%d", ret);
 		goto error;
 	}
 
