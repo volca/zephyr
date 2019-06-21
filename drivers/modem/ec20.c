@@ -106,6 +106,7 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 
 #define MDM_MANUFACTURER_LENGTH		10
 #define MDM_MODEL_LENGTH		16
+#define MDM_MIN_MODEL_LENGTH	5
 #define MDM_REVISION_LENGTH		64
 #define MDM_IMEI_LENGTH			16
 
@@ -569,11 +570,6 @@ static void on_cmd_atcmdecho_nosock_ready(struct net_buf **buf, u16_t len)
     LOG_INF("READY");
 }
 
-
-static void on_cmd_atcmdinfo(struct net_buf **buf, u16_t len)
-{
-}
-
 static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 {
     strcpy(ictx.mdm_manufacturer, "Quectel");
@@ -583,12 +579,35 @@ static void on_cmd_atcmdinfo_manufacturer(struct net_buf **buf, u16_t len)
 static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 {
 	size_t out_len;
+	struct net_buf *frag = NULL;
+	u16_t offset;
 
-	out_len = net_buf_linearize(ictx.mdm_model,
-				    sizeof(ictx.mdm_model) - 1,
+	/* make sure model data is received */
+	if (len < MDM_MIN_MODEL_LENGTH) {
+		LOG_DBG("Waiting for data");
+		/* wait for more data */
+		k_sleep(K_MSEC(500));
+		modem_read_rx(buf);
+	}
+
+	/* skip CR/LF */
+	net_buf_skipcrlf(buf);
+	if (!*buf) {
+		LOG_DBG("Unable to find MODEL (net_buf_skipcrlf)");
+		return;
+	}
+
+	frag = NULL;
+	len = net_buf_findcrlf(*buf, &frag, &offset);
+	if (!frag) {
+		LOG_DBG("Unable to find MODEL (net_buf_findcrlf)");
+	}
+
+	out_len = net_buf_linearize(ictx.mdm_model, sizeof(ictx.mdm_model) - 1,
 				    *buf, 0, len);
 	ictx.mdm_model[out_len] = 0;
-	LOG_INF("Model: EC20%s", ictx.mdm_model);
+
+	LOG_INF("Model: %s", log_strdup(ictx.mdm_model));
 }
 
 static void on_cmd_atcmdinfo_revision(struct net_buf **buf, u16_t len)
@@ -618,7 +637,6 @@ static void on_cmd_atcmdecho_nosock_imei(struct net_buf **buf, u16_t len)
 	struct net_buf *frag = NULL;
 	u16_t offset;
 	size_t out_len;
-
 
 	/* make sure IMEI data is received */
 	if (len < MDM_IMEI_LENGTH) {
@@ -1153,10 +1171,9 @@ static void modem_rx(void)
 		CMD_HANDLER("AT+USOCL=", atcmdecho),
 
 		/* MODEM Information */
-		CMD_HANDLER("ATI", atcmdinfo),
 		CMD_HANDLER("Quectel", atcmdinfo_manufacturer),
-		CMD_HANDLER("EC20", atcmdinfo_model),
 		CMD_HANDLER("Revision: ", atcmdinfo_revision),
+		CMD_HANDLER("AT+CGMM", atcmdinfo_model),
 		CMD_HANDLER("+CSQ: ", atcmdinfo_rssi),
 
 		/* SOLICITED SOCKET RESPONSES */
@@ -1371,6 +1388,12 @@ restart:
 		goto error;
 	}
     k_sleep(K_SECONDS(1));
+
+	ret = send_at_cmd(NULL, "AT+CGMM", MDM_CMD_TIMEOUT);
+	if (ret < 0) {
+		LOG_ERR("AT+CGMM ret:%d", ret);
+		goto error;
+	}
 
 	/* query modem IMEI */
 	ret = send_at_cmd(NULL, "AT+CGSN", MDM_CMD_TIMEOUT);
