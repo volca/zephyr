@@ -12,6 +12,7 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 #include <zephyr/types.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <ctype.h>
 #include <errno.h>
 #include <zephyr.h>
@@ -375,7 +376,6 @@ static int send_data(struct modem_socket *sock,
          dst_port);
 
 	ret = send_at_cmd(sock, buf, MDM_CMD_TIMEOUT);
-    LOG_WRN("dns %s", log_strdup(buf));
 
 	k_sleep(MDM_PROMPT_CMD_DELAY);
 
@@ -397,7 +397,7 @@ static int send_data(struct modem_socket *sock,
 			 * TODO: Something faster here.
 			 */
 			for (i = 0; i < frag->len; i++) {
-				snprintk(buf, sizeof(buf), "%02x", frag->data[i]);
+				snprintk(buf, sizeof(buf), "%02X", frag->data[i]);
 				mdm_receiver_send(&ictx.mdm_ctx, buf, 2);
 			}
 		}
@@ -411,9 +411,6 @@ static int send_data(struct modem_socket *sock,
 	} else if (ret == -EAGAIN) {
 		ret = -ETIMEDOUT;
 	}
-
-	ret = send_at_cmd(sock, "AT+QISEND=0,0", MDM_CMD_TIMEOUT);
-    LOG_WRN("resp %s", log_strdup(buf));
 
 	return ret;
 }
@@ -803,6 +800,13 @@ static void sockreadrecv_cb_work(struct k_work *work)
 	} else {
 		net_pkt_unref(pkt);
 	}
+
+	ictx.last_error = 0;
+	if (!sock) {
+		k_sem_give(&ictx.response_sem);
+	} else {
+		k_sem_give(&sock->sock_send_sem);
+	}
 }
 
 /* Common code for +USOR[D|F] */
@@ -810,48 +814,34 @@ static void on_cmd_sockread_common(int socket_id, struct net_buf **buf,
 				   u16_t len)
 {
 	struct modem_socket *sock = NULL;
-	int i, actual_length, hdr_len = 0;
+	int i, actual_length, hdr_len = 0, out_len = 0;
 	size_t value_size;
-	char value[10];
+	char value[10], rsp[255];
 	u8_t c = 0U;
 
-	/* comma marks the end of length */
-	i = 0;
-	value_size = sizeof(value);
-	(void)memset(value, 0, value_size);
-	while (*buf && i < value_size) {
-		value[i] = net_buf_pull_u8(*buf);
-		len--;
-		if (!(*buf)->len) {
-			*buf = net_buf_frag_del(NULL, *buf);
-		}
+    *buf = net_buf_frag_del(NULL, *buf);
 
-		if (value[i] == ',') {
-			break;
-		}
+    LOG_DBG("Waiting for data");
+    /* wait for more data */
+    k_sleep(K_MSEC(100));
+    modem_read_rx(buf);
 
-		i++;
-	}
-
-	/* make sure we still have buf data, the last pulled character was
-	 * a comma and that the next char in the buffer is a quote.
-	 */
-	if (!*buf || value[i] != ',' || *(*buf)->data != '\"') {
-		LOG_ERR("Incorrect format! Ignoring data!");
-		return;
-	}
+	out_len = net_buf_linearize(rsp, sizeof(rsp) - 1, *buf, 0, len);
+	rsp[out_len] = 0;
+    if (out_len > 40) {
+        LOG_WRN("data %d %s", out_len, log_strdup(rsp + 19));
+        rsp[20] = 0;
+        LOG_WRN("data-prefix %s", log_strdup(rsp));
+    } else {
+        LOG_WRN("data %d %s", out_len, log_strdup(rsp));
+    }
 
 	/* clear the comma */
-	value[i] = '\0';
-	actual_length = atoi(value);
+	//actual_length = len / 2 + 1;
+	actual_length = len;
+    len = out_len;
 
-	/* skip quote */
-	len--;
-	net_buf_pull_u8(*buf);
-	if (!(*buf)->len) {
-		*buf = net_buf_frag_del(NULL, *buf);
-	}
-
+    LOG_WRN("act %d len %d", actual_length, len);
 	/* check that we have enough data */
 	if (!*buf || len > (actual_length * 2) + 1) {
 		LOG_ERR("Incorrect format! Ignoring data!");
@@ -884,15 +874,29 @@ static void on_cmd_sockread_common(int socket_id, struct net_buf **buf,
 	hdr_len = pkt_setup_ip_data(sock->recv_pkt, sock);
 
 	/* move hex encoded data from the buffer to the recv_pkt */
-	for (i = 0; i < actual_length * 2; i++) {
+	//for (i = 0; i < actual_length * 2; i++) {
+	for (i = 0; i < len; i++) {
+        c = net_buf_pull_u8(*buf);
+        if (net_pkt_write_u8(sock->recv_pkt, c)) {
+            LOG_ERR("Unable to add data! Aborting!");
+            net_pkt_unref(sock->recv_pkt);
+            sock->recv_pkt = NULL;
+            return;
+        }
+
+		if (!(*buf)->len) {
+			*buf = net_buf_frag_del(NULL, *buf);
+		}
+        /*
 		char c2 = *(*buf)->data;
+        LOG_WRN("Pkg %c", c2);
 
 		if (isdigit(c2)) {
 			c += c2 - '0';
 		} else if (isalpha(c2)) {
 			c += c2 - (isupper(c2) ? 'A' - 10 : 'a' - 10);
 		} else {
-			/* TODO: unexpected input! skip? */
+			// TODO: unexpected input! skip? 
 		}
 
 		if (i % 2) {
@@ -908,11 +912,11 @@ static void on_cmd_sockread_common(int socket_id, struct net_buf **buf,
 			c = c << 4;
 		}
 
-		/* pull data from buf and advance to the next frag if needed */
 		net_buf_pull_u8(*buf);
 		if (!(*buf)->len) {
 			*buf = net_buf_frag_del(NULL, *buf);
 		}
+        */
 	}
 
 	net_pkt_cursor_init(sock->recv_pkt);
@@ -926,46 +930,7 @@ static void on_cmd_sockread_common(int socket_id, struct net_buf **buf,
 	 * case the app takes a long time.
 	 */
 	k_work_submit_to_queue(&modem_workq, &sock->recv_cb_work);
-}
 
-/*
- * Handler: +USORF: <socket_id>,<remote_ip_addr>,<remote_port>,<length>,
- *          "<hex_data>"
-*/
-static void on_cmd_sockread_udp(struct net_buf **buf, u16_t len)
-{
-	int socket_id;
-	char value[2];
-
-	/* make sure only a single digit is picked up for socket_id */
-	value[0] = net_buf_pull_u8(*buf);
-	len--;
-
-	/* skip first comma */
-	net_buf_pull_u8(*buf);
-	len--;
-
-	value[1] = 0;
-	socket_id = atoi(value);
-	if (socket_id < MDM_BASE_SOCKET_NUM - 1) {
-		return;
-	}
-
-	/* TODO: handle remote_ip_addr */
-
-	/* skip remote_ip */
-	while (*buf && len > 0 && net_buf_pull_u8(*buf) != ',') {
-		len--;
-	}
-
-	len--;
-	/* skip remote_port */
-	while (*buf && len > 0 && net_buf_pull_u8(*buf) != ',') {
-		len--;
-	}
-
-	len--;
-	return on_cmd_sockread_common(socket_id, buf, len);
 }
 
 /* Handler: +USORD: <socket_id>,<length>,"<hex_data>" */
@@ -989,6 +954,34 @@ static void on_cmd_sockread_tcp(struct net_buf **buf, u16_t len)
 	}
 
 	return on_cmd_sockread_common(socket_id, buf, len);
+}
+
+/* Handler: +QIURC: */
+static void on_cmd_atcmdnotify_urc(struct net_buf **buf, u16_t len)
+{
+	size_t out_len, buf_size;
+    char rsp[64];
+    int ret, socket_id = 0;
+    struct net_buf *frag = NULL;
+    u16_t offset;
+
+    len = net_buf_findcrlf(*buf, &frag, &offset);
+    if (!frag) {
+        LOG_DBG("Unable to find urc (net_buf_findcrlf)");
+    }
+
+	out_len = net_buf_linearize(rsp, sizeof(rsp) - 1, *buf, 0, len);
+	rsp[out_len] = 0;
+    LOG_WRN("urc %s", log_strdup(rsp));
+
+    ret = sscanf(rsp, "\"recv\",%d,%d", &socket_id, (int *)&buf_size);
+
+    if (ret > 0) {
+        LOG_INF("SOCKET: %d size %d", socket_id, buf_size);
+        return on_cmd_sockread_common(socket_id, buf, buf_size);
+    }
+
+    LOG_WRN("urc skips %d", ret);
 }
 
 /* Handler: +UUSOCL: <socket_id> */
@@ -1161,8 +1154,9 @@ static void modem_rx(void)
 		CMD_HANDLER("AT+CSQ", atcmdecho_nosock),
 		CMD_HANDLER("AT+USOCR=", atcmdecho_nosock),
 		CMD_HANDLER("AT+CGSN", atcmdecho_nosock_imei),
-		CMD_HANDLER("+CPIN: ", atcmdecho_nosock_sim),
 		CMD_HANDLER("READY", atcmdecho_nosock_ready),
+		CMD_HANDLER("+CPIN: ", atcmdecho_nosock_sim),
+		CMD_HANDLER("+QIURC: ", atcmdnotify_urc),
 
 		/* SOCKET COMMAND ECHOES for last_socket_id processing */
 		CMD_HANDLER("AT+USOCO=", atcmdecho),
@@ -1184,8 +1178,6 @@ static void modem_rx(void)
 		CMD_HANDLER("+USOWR: ", sockwrite),
 		//CMD_HANDLER("+QISEND: ", sockwrite),
 		CMD_HANDLER("+USORD: ", sockread_tcp),
-		CMD_HANDLER("+USORF: ", sockread_udp),
-		CMD_HANDLER("SEND OK", sockread_udp),
 
 		/* UNSOLICITED RESPONSE CODES */
 		CMD_HANDLER("+UUSOCL: ", socknotifyclose),
@@ -1214,8 +1206,13 @@ static void modem_rx(void)
 			}
 
             memcpy(tmp, rx_buf->data, rx_buf->len);
-            tmp[rx_buf->len] = 0;
-            LOG_INF("<-- %s (len:%u)", log_strdup(tmp), rx_buf->len);
+            if (rx_buf->len > 40) {
+                tmp[rx_buf->len] = 0;
+                LOG_INF("<-- %s (len:%u)", log_strdup(tmp + 20), rx_buf->len);
+            } else {
+                tmp[rx_buf->len] = 0;
+                LOG_INF("<-- %s (len:%u)", log_strdup(tmp), rx_buf->len);
+            }
 			/* look for matching data handlers */
 			i = -1;
 			for (i = 0; i < ARRAY_SIZE(handlers); i++) {
@@ -1411,7 +1408,7 @@ restart:
 	}
 
 	/* HEX receive data mode */
-	ret = send_at_cmd(NULL, "AT+QICFG=\"dataformat\",1,1", MDM_CMD_TIMEOUT);
+	ret = send_at_cmd(NULL, "AT+QICFG=\"dataformat\",1,0", MDM_CMD_TIMEOUT);
 	if (ret < 0) {
 		LOG_ERR("AT+QICFG=1 ret:%d", ret);
 	}
@@ -1451,17 +1448,6 @@ restart:
 		k_sleep(K_SECONDS(1));
 	}
 
-    ret = send_at_cmd(NULL, "AT+QIDEACT=1", MDM_CMD_TIMEOUT);
-    if (ret < 0) {
-		LOG_ERR("AT+QIDEACT ret:%d", ret);
-	}
-    k_sleep(K_SECONDS(1));
-
-    ret = send_at_cmd(NULL, "AT+QIACT=1", MDM_CMD_TIMEOUT);
-    if (ret < 0) {
-		LOG_ERR("AT+QIACT=1 ret:%d", ret);
-	}
-
 	/* query modem RSSI */
 	modem_rssi_query_work(NULL);
 	k_sleep(MDM_WAIT_FOR_RSSI_DELAY);
@@ -1488,6 +1474,13 @@ restart:
 		LOG_ERR("Failed network init.  Restarting process.");
 		goto restart;
 	}
+
+
+    ret = send_at_cmd(NULL, "AT+QIACT=1", MDM_CMD_TIMEOUT);
+    if (ret < 0) {
+		LOG_ERR("AT+QIACT=1 ret:%d", ret);
+	}
+    k_sleep(K_SECONDS(1));
 
 	LOG_INF("Network is ready.");
 
@@ -1844,6 +1837,7 @@ static int offload_put(struct net_context *context)
 	char buf[sizeof("AT+USOCL=#\r")];
 	int ret;
 
+    LOG_WRN("off_put");
 	if (!context) {
 		return -EINVAL;
 	}
