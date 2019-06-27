@@ -409,7 +409,6 @@ static int send_data(struct modem_socket *sock,
 
 	k_sem_reset(&sock->sock_send_sem);
 	ret = k_sem_take(&sock->sock_send_sem, MDM_CMD_SEND_TIMEOUT);
-    LOG_WRN("got sem %d error %d", ret, ictx.last_error);
     ret = 0;
 	if (ret == 0) {
 		ret = ictx.last_error;
@@ -1105,10 +1104,11 @@ static void modem_rx(void)
             memcpy(rx_tmp, rx_buf->data, rx_buf->len);
             rx_tmp[rx_buf->len] = 0;
             if (rx_buf->len > 40) {
-                LOG_INF("<-- %s (len:%u)", log_strdup(rx_tmp + 20), rx_buf->len);
+                LOG_DBG("<-- %s (len:%u)", log_strdup(rx_tmp + 20), rx_buf->len);
             } else {
-                LOG_INF("<-- %s (len:%u)", log_strdup(rx_tmp), rx_buf->len);
+                LOG_DBG("<-- %s (len:%u)", log_strdup(rx_tmp), rx_buf->len);
             }
+
 			/* look for matching data handlers */
 			i = -1;
 			for (i = 0; i < ARRAY_SIZE(handlers); i++) {
@@ -1483,7 +1483,6 @@ static int offload_get(sa_family_t family,
 	sock->ip_proto = ip_proto;
 	sock->context = *context;
 
-    LOG_WRN("OFFLOAD_GET send AT");
     ictx.last_socket_id = -1;
     ret = send_at_cmd(NULL, "AT", MDM_CMD_TIMEOUT);
     if (ret < 0) {
@@ -1614,7 +1613,6 @@ static int offload_connect(struct net_context *context,
         LOG_WRN("send at+qiopen err");
 		LOG_ERR("%s ret:%d", buf, ret);
 	}
-    LOG_WRN("offload_conn");
 
 	if (cb) {
 		cb(context, ret, user_data);
@@ -1680,13 +1678,10 @@ static int offload_sendto(struct net_pkt *pkt,
 		net_pkt_unref(pkt);
 	}
 
-    LOG_WRN("sendto 0");
-
 	if (cb) {
 		cb(context, ret, user_data);
 	}
 
-    LOG_WRN("sendto 1");
 	return ret;
 }
 
