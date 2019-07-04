@@ -759,7 +759,7 @@ static void on_cmd_sockopen(struct net_buf **buf, u16_t len)
     on_cmd_sockok(buf, len);
 }
 
-/* Handler: +USO[WR|ST]: <socket_id>,<length> */
+/* Handler: +QISEND: <socket_id>,<length> */
 static void on_cmd_sockwrite(struct net_buf **buf, u16_t len)
 {
 	char value[2];
@@ -838,7 +838,7 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 
 	if (!(*buf)) {
 		LOG_DBG("No more data, reading...");
-		k_sleep(K_MSEC(500));
+		k_sleep(K_MSEC(200));
 		modem_read_rx(buf);
 	}
 
@@ -898,6 +898,7 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 }
 
 /* Handler: +QICLOSE: <socket_id> */
+/* Handler: +QIURC: "closed",<socket_id> */
 static void on_cmd_socknotifyclose(struct net_buf **buf, u16_t len)
 {
 	char value[2];
@@ -916,12 +917,11 @@ static void on_cmd_socknotifyclose(struct net_buf **buf, u16_t len)
 	/* TODO: handle URC socket close */
 }
 
-/* Handler: +QIURC: "recv",<socket_id>,<length> */
+/* Handler: +QIURC: "recv",<socket_id> */
 static void on_cmd_socknotifydata(struct net_buf **buf, u16_t len)
 {
-	int socket_id, left_bytes;
-	size_t out_len;
-	char value[sizeof("#,####\r")];
+	int socket_id;
+	char value[sizeof("#\r")];
 	char sendbuf[sizeof("AT+QIRD=#\r")];
 	struct modem_socket *sock = NULL;
 
@@ -934,11 +934,6 @@ static void on_cmd_socknotifydata(struct net_buf **buf, u16_t len)
 	if (socket_id < MDM_BASE_SOCKET_NUM) {
 		return;
 	}
-
-	/* Second parameter is length */
-	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
-	value[out_len] = 0;
-	left_bytes = atoi(value);
 
 	sock = socket_from_id(socket_id);
 	if (!sock) {
@@ -1033,6 +1028,7 @@ static void modem_read_rx(struct net_buf **buf)
 					      BUF_ALLOC_TIMEOUT,
 					      read_rx_allocator,
 					      &mdm_recv_pool);
+
 		if (rx_len < bytes_read) {
 			LOG_ERR("Data was lost! read %u of %u!",
 				    rx_len, bytes_read);
@@ -1043,7 +1039,7 @@ static void modem_read_rx(struct net_buf **buf)
 /* RX thread */
 static void modem_rx(void)
 {
-	struct net_buf *rx_buf = NULL;
+	struct net_buf *rx_buf = NULL, *swap_buf = NULL;
 	struct net_buf *frag = NULL;
 	int i;
 	u16_t offset, len;
@@ -1062,7 +1058,6 @@ static void modem_rx(void)
 		/* SOCKET COMMAND ECHOES for last_socket_id processing */
 		CMD_HANDLER("AT+QIRD=", atcmdecho),
 
-
 		/* MODEM Information */
 		CMD_HANDLER("Quectel", atcmdinfo_manufacturer),
 		CMD_HANDLER("Revision: ", atcmdinfo_revision),
@@ -1073,11 +1068,12 @@ static void modem_rx(void)
 		CMD_HANDLER("OK", sockok),
 		CMD_HANDLER("ERROR", sockerror),
 		CMD_HANDLER("+QIOPEN: ", sockopen),
-		//CMD_HANDLER("+QISEND: ", sockwrite),
+		CMD_HANDLER("+QISEND: ", sockwrite),
 		CMD_HANDLER("+QIRD: ", sockread),
 
 		/* UNSOLICITED RESPONSE CODES */
 		CMD_HANDLER("+QICLOSE: ", socknotifyclose),
+		CMD_HANDLER("+QIURC: \"closed\",", socknotifyclose),
 		CMD_HANDLER("+QIURC: \"recv\",", socknotifydata),
 		CMD_HANDLER("+CREG: ", socknotifycreg),
 	};
@@ -1100,6 +1096,15 @@ static void modem_rx(void)
 			if (!frag) {
 				break;
 			}
+
+            if (len != offset) {
+                swap_buf = net_buf_clone(rx_buf, 10);
+                rx_buf = net_buf_frag_del(NULL, rx_buf);
+                modem_read_rx(&rx_buf);
+                net_buf_add_mem(swap_buf, rx_buf->data, rx_buf->len);
+                net_buf_unref(rx_buf);
+                rx_buf = swap_buf;
+            }
 
             memcpy(rx_tmp, rx_buf->data, rx_buf->len);
             rx_tmp[rx_buf->len] = 0;
