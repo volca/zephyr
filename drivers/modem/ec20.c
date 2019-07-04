@@ -903,6 +903,7 @@ static void on_cmd_socknotifyclose(struct net_buf **buf, u16_t len)
 {
 	char value[2];
 	int socket_id;
+    struct modem_socket *sock = NULL;
 
 	/* make sure only a single digit is picked up for socket_id */
 	value[0] = net_buf_pull_u8(*buf);
@@ -1243,10 +1244,7 @@ static void modem_reset(void)
 	/* bring down network interface */
 	atomic_clear_bit(ictx.iface->if_dev->flags, NET_IF_UP);
 
-    ret = send_at_cmd(NULL, "AT+QPOWD", MDM_CMD_TIMEOUT);
-    if (ret < 0) {
-		LOG_INF("AT+QPOWD ret:%d", ret);
-    }
+    send_at_cmd(NULL, "AT+QPOWD", MDM_CMD_TIMEOUT);
 
 restart:
 	/* stop RSSI delay work */
