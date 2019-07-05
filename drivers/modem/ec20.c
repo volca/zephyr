@@ -731,9 +731,12 @@ static void on_cmd_sockok(struct net_buf **buf, u16_t len)
 
 	ictx.last_error = 0;
 	sock = socket_from_id(ictx.last_socket_id);
+    printf("--- sockok 1\n");
 	if (!sock) {
+    printf("--- sockok 2\n");
 		k_sem_give(&ictx.response_sem);
 	} else {
+    printf("--- sockok 3\n");
 		k_sem_give(&sock->sock_send_sem);
 	}
 }
@@ -903,7 +906,6 @@ static void on_cmd_socknotifyclose(struct net_buf **buf, u16_t len)
 {
 	char value[2];
 	int socket_id;
-    struct modem_socket *sock = NULL;
 
 	/* make sure only a single digit is picked up for socket_id */
 	value[0] = net_buf_pull_u8(*buf);
@@ -914,6 +916,8 @@ static void on_cmd_socknotifyclose(struct net_buf **buf, u16_t len)
 	if (socket_id < MDM_BASE_SOCKET_NUM) {
 		return;
 	}
+
+    ictx.last_socket_id = socket_id;
 
 	/* TODO: handle URC socket close */
 }
@@ -1493,8 +1497,6 @@ static int offload_get(sa_family_t family,
 		socket_put(sock);
 	}
 
-	k_sleep(K_SECONDS(1));
-
 	return ret;
 }
 
@@ -1722,16 +1724,21 @@ static int offload_recv(struct net_context *context,
 {
 	struct modem_socket *sock;
 
+    printf("off-recv\n");
+
 	if (!context) {
+    printf("off-recv 0\n");
 		return -EINVAL;
 	}
 
+    printf("off-recv 1\n");
 	sock = (struct modem_socket *)context->offload_context;
 	if (!sock) {
 		LOG_ERR("Can't locate socket for net_ctx:%p!", context);
 		return -EINVAL;
 	}
 
+    printf("off-recv 2\n");
 	sock->recv_cb = cb;
 	sock->recv_user_data = user_data;
 
