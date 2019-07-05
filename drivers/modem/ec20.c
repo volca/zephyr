@@ -24,6 +24,8 @@ LOG_MODULE_REGISTER(LOG_DOMAIN);
 #include <net/net_if.h>
 #include <net/net_offload.h>
 #include <net/net_pkt.h>
+#include <net/socket_offload.h>
+#include <net/socket.h>
 #if defined(CONFIG_NET_IPV6)
 #include "ipv6.h"
 #endif
@@ -131,24 +133,26 @@ static struct k_work_q modem_workq;
 static u8_t mdm_ok = 0;
 
 struct modem_socket {
-	struct net_context *context;
+    struct net_context *context;
 	sa_family_t family;
 	enum net_sock_type type;
 	enum net_ip_protocol ip_proto;
-	struct sockaddr src;
-	struct sockaddr dst;
-	int dst_port;
 
-	int socket_id;
+	bool data_ready;
 
 	/** semaphore */
-	struct k_sem sock_send_sem;
+	struct k_sem sem_write_ready;
+	struct k_sem sem_read_ready;
 
-	/** socket callbacks */
-	struct k_work recv_cb_work;
-	net_context_recv_cb_t recv_cb;
-	struct net_pkt *recv_pkt;
-	void *recv_user_data;
+	/* Read related parameters. */
+	u8_t *p_recv_addr;
+	size_t recv_max_len;
+	u16_t bytes_read;
+	bool is_in_reading;
+
+	bool is_udp_opened;
+	bool is_polled;
+	bool in_use;
 };
 
 struct modem_iface_ctx {
@@ -168,6 +172,7 @@ struct modem_iface_ctx {
 
 	/* semaphores */
 	struct k_sem response_sem;
+	struct k_sem poll_sem;
 
 	/* RSSI work */
 	struct k_delayed_work rssi_query_work;
@@ -731,12 +736,9 @@ static void on_cmd_sockok(struct net_buf **buf, u16_t len)
 
 	ictx.last_error = 0;
 	sock = socket_from_id(ictx.last_socket_id);
-    printf("--- sockok 1\n");
 	if (!sock) {
-    printf("--- sockok 2\n");
 		k_sem_give(&ictx.response_sem);
 	} else {
-    printf("--- sockok 3\n");
 		k_sem_give(&sock->sock_send_sem);
 	}
 }
@@ -1462,9 +1464,7 @@ error:
 	return ret;
 }
 
-/*** OFFLOAD FUNCTIONS ***/
-
-static int offload_get(sa_family_t family,
+static int ec20_socket(sa_family_t family,
 		       enum net_sock_type type,
 		       enum net_ip_protocol ip_proto,
 		       struct net_context **context)
@@ -1781,16 +1781,29 @@ static int offload_put(struct net_context *context)
 	return 0;
 }
 
+static const struct socket_offload ec20_socket_ops = {
+	.socket = ec20_socket,
+	.close = ec20_close,
+	.connect = ec20_connect,
+	.send = ec20_send,
+	.sendto = ec20_sendto,
+	.recv = ec20_recv,
+	.recvfrom = ec20_recvfrom,
+	.poll = ec20_poll,
+};
+
+/*** OFFLOAD FUNCTIONS ***/
+
+static int offload_get(sa_family_t family,
+		       enum net_sock_type type,
+		       enum net_ip_protocol ip_proto,
+		       struct net_context **context)
+{
+    return -ENOTSUP;
+}
+
 static struct net_offload offload_funcs = {
 	.get = offload_get,
-	.bind = offload_bind,
-	.listen = offload_listen,	/* TODO */
-	.connect = offload_connect,
-	.accept = offload_accept,	/* TODO */
-	.send = offload_send,
-	.sendto = offload_sendto,
-	.recv = offload_recv,
-	.put = offload_put,
 };
 
 static inline u8_t *modem_get_mac(struct device *dev)
@@ -1816,6 +1829,7 @@ static void offload_iface_init(struct net_if *iface)
 			     sizeof(ctx->mac_addr),
 			     NET_LINK_ETHERNET);
 	ctx->iface = iface;
+    socket_offload_register(&ec20_socket_ops);
 }
 
 static struct net_if_api api_funcs = {

@@ -10,6 +10,7 @@ config MODEM_EC20
 	bool "Enable ec20 4G modem driver"
 	select MODEM_RECEIVER
 	select NET_OFFLOAD
+	select NET_SOCKETS_OFFLOAD
 	imply GPIO
 	help
 	  Choose this setting to enable ec20 4G modem
