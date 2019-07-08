@@ -116,6 +116,8 @@ static const struct mdm_control_pinconfig pinconfig[] = {
 #define MDM_REVISION_LENGTH		64
 #define MDM_IMEI_LENGTH			16
 
+#define DNS_ADDR_LENGTH			80
+
 #define RSSI_TIMEOUT_SECS		30
 
 #define SOCK_TYPE_TCP           "TCP"
@@ -189,7 +191,9 @@ struct modem_iface_ctx {
 	char mdm_revision[MDM_REVISION_LENGTH];
 	char mdm_imei[MDM_IMEI_LENGTH];
 
-	/* modem state */
+	/* last DNS addr */
+    char last_dns_addr[DNS_ADDR_LENGTH];
+
 	int ev_creg;
 };
 
@@ -201,7 +205,7 @@ struct cmd_handler {
 
 static struct modem_iface_ctx ictx;
 
-static void ec20_read_rx(struct net_buf **buf);
+static void modem_read_rx(struct net_buf **buf);
 
 /*** Verbose Debugging Functions ***/
 #if defined(ENABLE_VERBOSE_MODEM_RECV_HEXDUMP)
@@ -296,7 +300,7 @@ static int send_at_cmd(const u8_t *data, struct k_sem *sem, int timeout) {
 
 	ictx.last_error = 0;
 
-	LOG_DBG("OUT: [%s]", data);
+	LOG_DBG("OUT: [%s]", log_strdup(data));
 	mdm_receiver_send(&ictx.mdm_ctx, data, strlen(data));
 	mdm_receiver_send(&ictx.mdm_ctx, "\r\n", 2);
 
@@ -382,7 +386,7 @@ static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 		LOG_DBG("Waiting for data");
 		/* wait for more data */
 		k_sleep(K_MSEC(500));
-		ec20_read_rx(buf);
+		modem_read_rx(buf);
 	}
 
 	/* skip CR/LF */
@@ -392,7 +396,6 @@ static void on_cmd_atcmdinfo_model(struct net_buf **buf, u16_t len)
 		return;
 	}
 
-	frag = NULL;
 	len = net_buf_findcrlf(*buf, &frag, &offset);
 	if (!frag) {
 		LOG_DBG("Unable to find MODEL (net_buf_findcrlf)");
@@ -427,7 +430,7 @@ static void on_cmd_atcmdecho_nosock_imei(struct net_buf **buf, u16_t len)
 		LOG_DBG("Waiting for data");
 		/* wait for more data */
 		k_sleep(K_MSEC(500));
-		ec20_read_rx(buf);
+		modem_read_rx(buf);
 	}
 
 	/* skip CR/LF */
@@ -577,6 +580,18 @@ static void on_cmd_socknotifydata(struct net_buf **buf, u16_t len)
 {
 }
 
+/* Handler: +QIURC: "dnsgip","<addr>" */
+static void on_cmd_getaddr(struct net_buf **buf, u16_t len)
+{
+	size_t out_len;
+
+	out_len = net_buf_linearize(ictx.last_dns_addr, sizeof(ictx.last_dns_addr) - 1, *buf, 0, len);
+    // remove the last double quote
+	ictx.last_dns_addr[out_len - 1] = 0;
+
+    k_sem_give(&ictx.sem_response);
+}
+
 static void on_cmd_write_ready(struct net_buf **buf, u16_t len)
 {
 	struct ec20_socket *socket;
@@ -613,7 +628,7 @@ static void on_cmd_read_ready(struct net_buf **buf, u16_t len)
 	id = atoi(strtok(buffer, ","));
 	sock = &ictx.sockets[id];
 	if (sock->is_in_reading) {
-		ec20_read_rx(buf);
+		modem_read_rx(buf);
 
 		bytes_read = atoi(strtok(NULL, ","));
 		LOG_DBG("Reported %d bytes to be read.", bytes_read);
@@ -678,7 +693,7 @@ static inline struct net_buf *read_rx_allocator(s32_t timeout, void *user_data)
 	return net_buf_alloc((struct net_buf_pool *)user_data, timeout);
 }
 
-static void ec20_read_rx(struct net_buf **buf)
+static void modem_read_rx(struct net_buf **buf)
 {
 	u8_t uart_buffer[MDM_RECV_BUF_SIZE];
 	size_t bytes_read = 0;
@@ -738,12 +753,13 @@ static void modem_rx(void)
 
 		/* SOLICITED SOCKET RESPONSES */
 		CMD_HANDLER("OK", sockok),
-		CMD_HANDLER("ERROR", sockexterror),
+		CMD_HANDLER("+QIGETERROR", sockexterror),
 
 		/* UNSOLICITED RESPONSE CODES */
 		CMD_HANDLER("+QICLOSE: ", socknotifyclose),
 		CMD_HANDLER("+QIURC: \"closed\",", socknotifyclose),
 		CMD_HANDLER("+QIURC: \"recv\",", socknotifydata),
+		CMD_HANDLER("+QIURC: \"dnsgip\",\"", getaddr),
 
         /* SOCKET OPERATION RESPONSES */
 		CMD_HANDLER("+QISEND:", write_ready),
@@ -756,7 +772,7 @@ static void modem_rx(void)
 		/* wait for incoming data */
 		k_sem_take(&ictx.mdm_ctx.rx_sem, K_FOREVER);
 
-		ec20_read_rx(&rx_buf);
+		modem_read_rx(&rx_buf);
 
 		while (rx_buf) {
 			net_buf_skipcrlf(&rx_buf);
@@ -773,7 +789,7 @@ static void modem_rx(void)
             if (len != offset) {
                 swap_buf = net_buf_clone(rx_buf, 10);
                 rx_buf = net_buf_frag_del(NULL, rx_buf);
-                ec20_read_rx(&rx_buf);
+                modem_read_rx(&rx_buf);
                 net_buf_add_mem(swap_buf, rx_buf->data, rx_buf->len);
                 net_buf_unref(rx_buf);
                 rx_buf = swap_buf;
@@ -1050,15 +1066,13 @@ static int modem_init(struct device *dev)
 
 	ARG_UNUSED(dev);
 
-    (void)memset(&ictx, 0, sizeof(ictx));
-	k_sem_init(&ictx.sem_response, 0, 1);
-	k_sem_init(&ictx.sem_poll, 0, 1);
-
 	/* check for valid pinconfig */
 	__ASSERT(ARRAY_SIZE(pinconfig) == MAX_MDM_CONTROL_PINS,
 	       "Incorrect modem pinconfig!");
 
-	(void)memset(&ictx, 0, sizeof(ictx));
+    (void)memset(&ictx, 0, sizeof(ictx));
+	k_sem_init(&ictx.sem_response, 0, 1);
+	k_sem_init(&ictx.sem_poll, 0, 1);
     for (i = 0; i < MDM_MAX_SOCKETS; i++) {
 		k_sem_init(&ictx.sockets[i].sem_write_ready, 0, 1);
 		k_sem_init(&ictx.sockets[i].sem_read_ready, 0, 1);
@@ -1170,27 +1184,33 @@ static int ec20_connect(int id, const struct sockaddr *addr, socklen_t addrlen) 
 		return -EINVAL;
 	}
 
+    /*
     if (sock->type == SOCK_STREAM) {
         strcpy(type, SOCK_TYPE_TCP);
     } else {
         strcpy(type, SOCK_TYPE_UDP);
     }
+    */
+    strcpy(type, SOCK_TYPE_TCP);
 
     /* send AT commands(AT+QIOPEN=<contextID>,<socket>,"<TCP/UDP>","<IP_address>/<domain_name>", */
     /* <remote_port>,<local_port>,<access_mode>) to connect TCP server */
     /* contextID   = 1 : use same contextID as AT+QICSGP & AT+QIACT */
     /* local_port  = 0 : local port assigned automatically */
     /* access_mode = 0 : Buffer access mode */
+
+
     snprintk(buf, sizeof(buf), "AT+QIOPEN=1,%d,\"%s\",\"%s\",%d,0,0", 
-            id, modem_sprint_ip_addr(addr), type, port);
+            id, type, modem_sprint_ip_addr(addr), port);
     ret = send_at_cmd(buf, &ictx.sem_response, MDM_CMD_TIMEOUT);
 
 	if (ret < 0) {
-        LOG_WRN("send at+qiopen err");
-		LOG_ERR("%s ret:%d", buf, ret);
+		LOG_ERR("%s ret:%d", log_strdup(buf), ret);
         goto error;
 	}
 
+    // TODO: check +QIOPEN: then QISEND
+    
     /* Wait until ^QIWRITE returns 0,1. */
 	ret = k_sem_take(&sock->sem_write_ready, MDM_CMD_CONN_TIMEOUT);
 	if (ret < 0) {
@@ -1326,6 +1346,105 @@ int ec20_poll(struct pollfd *fds, int nfds, int timeout)
 	}
 }
 
+static int ec20_getaddrinfo(const char *node, const char *service,
+				  const struct addrinfo *hints,
+				  struct addrinfo **res) 
+{
+	unsigned long port = 0;
+	int socktype = SOCK_STREAM, proto = IPPROTO_TCP;
+	struct addrinfo *ai;
+	struct sockaddr *ai_addr;
+	int16_t ret; 
+	uint32_t ipaddr[4];
+	char buf[128];
+
+	/* Check args: */
+	if (!node) {
+		ret = EAI_NONAME;
+		goto exit;
+	}
+	if (service) {
+		port = strtol(service, NULL, 10);
+		if (port < 1 || port > USHRT_MAX) {
+			ret = EAI_SERVICE;
+			goto exit;
+		}
+	}
+	if (!res) {
+		ret = EAI_NONAME;
+		goto exit;
+	}
+
+	/* Now, try to resolve host name: */
+
+	snprintf(buf, sizeof(buf), "AT+QIDNSGIP=1,\"%s\"", node);
+    send_at_cmd(buf,  &ictx.sem_response, MDM_CMD_CONN_TIMEOUT);
+	if (ret < 0) {
+		LOG_ERR("Could not resolve name: %s, ret: %d",
+			    node, ret);
+		ret = EAI_NONAME;
+		goto exit;
+	}
+
+    ret = k_sem_take(&ictx.sem_response, MDM_CMD_TIMEOUT);
+    //TODO check ret
+    
+    ret = inet_pton(AF_INET, ictx.last_dns_addr, &ipaddr[0]);
+    ipaddr[0] = htonl(ipaddr[0]);
+    //TODO check ret
+    
+	/* Allocate out res (addrinfo) struct.	Just one. */
+	*res = calloc(1, sizeof(struct addrinfo));
+	ai = *res;
+	if (!ai) {
+		ret = EAI_MEMORY;
+		goto exit;
+	} else {
+		/* Now, alloc the embedded sockaddr struct: */
+		ai_addr = calloc(1, sizeof(struct sockaddr));
+		if (!ai_addr) {
+			ret = EAI_MEMORY;
+			free(*res);
+			goto exit;
+		}
+	}
+
+	/* Now, fill in the fields of res (addrinfo struct): */
+	ai->ai_family = AF_INET;
+	if (hints) {
+		socktype = hints->ai_socktype;
+	}
+	ai->ai_socktype = socktype;
+
+	if (socktype == SOCK_DGRAM) {
+		proto = IPPROTO_UDP;
+	}
+	ai->ai_protocol = proto;
+
+	/* Fill sockaddr struct fields based on family: */
+	if (ai->ai_family == AF_INET) {
+		net_sin(ai_addr)->sin_family = ai->ai_family;
+		net_sin(ai_addr)->sin_addr.s_addr = htonl(ipaddr[0]);
+		net_sin(ai_addr)->sin_port = htons(port);
+		ai->ai_addrlen = sizeof(struct sockaddr_in);
+	} else {
+        goto exit;
+    }
+	ai->ai_addr = ai_addr;
+    return 0;
+
+exit:
+	return ret;
+}
+
+static void ec20_freeaddrinfo(struct addrinfo *res)
+{
+	__ASSERT_NO_MSG(res);
+
+	free(res->ai_addr);
+	free(res);
+}
+
 static const struct socket_offload ec20_socket_ops = {
 	.socket = ec20_socket,
 	.close = ec20_close,
@@ -1335,6 +1454,8 @@ static const struct socket_offload ec20_socket_ops = {
 	.recv = ec20_recv,
 	.recvfrom = ec20_recvfrom,
 	.poll = ec20_poll,
+    .getaddrinfo = ec20_getaddrinfo,
+    .freeaddrinfo = ec20_freeaddrinfo,
 };
 
 /*** OFFLOAD FUNCTIONS ***/
@@ -1344,7 +1465,8 @@ static int offload_get(sa_family_t family,
 		       enum net_ip_protocol ip_proto,
 		       struct net_context **context)
 {
-    return -ENOTSUP;
+    LOG_ERR("NET_SOCKETS_OFFLOAD must be configured for this driver");
+    return -1;
 }
 
 static struct net_offload offload_funcs = {
