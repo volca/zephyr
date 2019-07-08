@@ -206,6 +206,7 @@ struct cmd_handler {
 static struct modem_iface_ctx ictx;
 
 static void modem_read_rx(struct net_buf **buf);
+static int ec20_close(int id);
 
 /*** Verbose Debugging Functions ***/
 #if defined(ENABLE_VERBOSE_MODEM_RECV_HEXDUMP)
@@ -512,6 +513,22 @@ static void on_cmd_sockok(struct net_buf **buf, u16_t len)
 	LOG_INF("OK");
 }
 
+static void on_cmd_socksend(struct net_buf **buf, u16_t len)
+{
+    struct ec20_socket *sock = NULL;
+	sock = &ictx.sockets[ictx.last_socket_id];
+    k_sem_give(&sock->sem_write_ready);
+}
+
+static void on_cmd_sockwrote(struct net_buf **buf, u16_t len)
+{
+    struct ec20_socket *sock = NULL;
+	sock = &ictx.sockets[ictx.last_socket_id];
+    k_sem_give(&sock->sem_write_ready);
+	k_sem_give(&ictx.sem_response);
+	LOG_INF("Wrote");
+}
+
 /* Handler: ERROR */
 static void on_cmd_sockexterror(struct net_buf **buf, u16_t len)
 {
@@ -558,19 +575,19 @@ static void on_cmd_sockread(struct net_buf **buf, u16_t len)
 static void on_cmd_socknotifyclose(struct net_buf **buf, u16_t len)
 {
 	char value[2];
-	int socket_id;
+	int id;
 
 	/* make sure only a single digit is picked up for socket_id */
 	value[0] = net_buf_pull_u8(*buf);
 	len--;
 	value[1] = 0;
 
-	socket_id = atoi(value);
-	if (socket_id < MDM_BASE_SOCKET_NUM) {
+	id = atoi(value);
+	if (id < MDM_BASE_SOCKET_NUM) {
 		return;
 	}
 
-    ictx.last_socket_id = socket_id;
+    LOG_WRN("socket close");
 
 	/* TODO: handle URC socket close */
 }
@@ -578,6 +595,7 @@ static void on_cmd_socknotifyclose(struct net_buf **buf, u16_t len)
 /* Handler: +QIURC: "recv",<socket_id> */
 static void on_cmd_socknotifydata(struct net_buf **buf, u16_t len)
 {
+    k_sem_give(&ictx.sem_response);
 }
 
 /* Handler: +QIURC: "dnsgip","<addr>" */
@@ -623,16 +641,24 @@ static void on_cmd_read_ready(struct net_buf **buf, u16_t len)
 	u16_t bytes_read;
 	u8_t id;
 
-	/* skip the first line, which should be ^SISR: */
-	net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
-	id = atoi(strtok(buffer, ","));
-	sock = &ictx.sockets[id];
-	if (sock->is_in_reading) {
-		modem_read_rx(buf);
 
-		bytes_read = atoi(strtok(NULL, ","));
-		LOG_DBG("Reported %d bytes to be read.", bytes_read);
-		net_buf_skip(*buf, len);
+	/* skip the first line, which should be ^SISR: */
+	
+	if (ictx.last_socket_id < MDM_BASE_SOCKET_NUM) {
+        // AT+QIRD=<socket_id>
+        net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
+        id = atoi(strtok(buffer, ","));
+    } else {
+        // +QIRD: <bytes_read><CR><LF>
+        id = ictx.last_socket_id;
+    }
+
+	sock = &ictx.sockets[id];
+    LOG_WRN("on read ready %d reading %d", id, sock->is_in_reading);
+	if (sock->is_in_reading) {
+        net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
+		bytes_read = atoi(buffer);
+		LOG_DBG("Reported %d bytes to be read. len: %d", bytes_read, len);
 		net_buf_skipcrlf(buf);
 		if (!*buf) {
 			LOG_DBG("Data read error.");
@@ -758,12 +784,15 @@ static void modem_rx(void)
 		/* UNSOLICITED RESPONSE CODES */
 		CMD_HANDLER("+QICLOSE: ", socknotifyclose),
 		CMD_HANDLER("+QIURC: \"closed\",", socknotifyclose),
-		CMD_HANDLER("+QIURC: \"recv\",", socknotifydata),
+		//CMD_HANDLER("+QIURC: \"recv\",", socknotifydata),
+		CMD_HANDLER("SEND OK", sockwrote),
 		CMD_HANDLER("+QIURC: \"dnsgip\",\"", getaddr),
 
         /* SOCKET OPERATION RESPONSES */
-		CMD_HANDLER("+QISEND:", write_ready),
-		CMD_HANDLER("+QIRD:", read_ready),
+		CMD_HANDLER("+QIOPEN: ", write_ready),
+		CMD_HANDLER("+QIURC: \"recv\",", read_ready),
+		CMD_HANDLER("+QIRD: ", read_ready),
+		CMD_HANDLER("AT+QISEND=", socksend),
 		CMD_HANDLER("+QIURC \"error\",", socket_error),
 	};
 
@@ -989,7 +1018,7 @@ restart:
 	}
 
 	/* HEX receive data mode */
-	ret = send_at_cmd("AT+QICFG=\"dataformat\",1,0", &ictx.sem_response, MDM_CMD_TIMEOUT);
+	ret = send_at_cmd("AT+QICFG=\"dataformat\",0,0", &ictx.sem_response, MDM_CMD_TIMEOUT);
 	if (ret < 0) {
 		LOG_ERR("AT+QICFG=1 ret:%d", ret);
 	}
@@ -1197,7 +1226,7 @@ static int ec20_connect(int id, const struct sockaddr *addr, socklen_t addrlen) 
     /* <remote_port>,<local_port>,<access_mode>) to connect TCP server */
     /* contextID   = 1 : use same contextID as AT+QICSGP & AT+QIACT */
     /* local_port  = 0 : local port assigned automatically */
-    /* access_mode = 0 : Buffer access mode */
+    /* access_mode = 1 : direct  mode */
 
 
     snprintk(buf, sizeof(buf), "AT+QIOPEN=1,%d,\"%s\",\"%s\",%d,0,0", 
@@ -1209,8 +1238,6 @@ static int ec20_connect(int id, const struct sockaddr *addr, socklen_t addrlen) 
         goto error;
 	}
 
-    // TODO: check +QIOPEN: then QISEND
-    
     /* Wait until ^QIWRITE returns 0,1. */
 	ret = k_sem_take(&sock->sem_write_ready, MDM_CMD_CONN_TIMEOUT);
 	if (ret < 0) {
@@ -1250,12 +1277,15 @@ static ssize_t ec20_send(int id, const void *buf, size_t len, int flags)
 		return -EINVAL;
 	}
 
+    ictx.last_socket_id = id;
 	snprintf(buf_cmd, sizeof(buf_cmd), "AT+QISEND=%u,%u", id, len);
 	ret = send_at_cmd(buf_cmd, &sock->sem_write_ready, MDM_CMD_TIMEOUT);
 	if (ret < 0) {
 		LOG_ERR("Write request failed.");
 		goto error;
 	}
+
+    k_sleep(MDM_PROMPT_CMD_DELAY);
 
 	k_sem_reset(&ictx.sem_response);
 	mdm_receiver_send(&ictx.mdm_ctx, buf, len);
@@ -1279,23 +1309,29 @@ static ssize_t ec20_recv(int id, void *buf, size_t max_len, int flags) {
 		return -EMSGSIZE;
 	}
 
+    LOG_WRN("ec20_recv 1");
 	if (!sock->data_ready) {
 		k_sem_take(&sock->sem_read_ready, K_FOREVER);
 	}
+    LOG_WRN("ec20_recv 2");
 	sock->data_ready = false;
 	k_sem_reset(&sock->sem_read_ready);
 	k_sem_reset(&ictx.sem_response);
 	sock->is_in_reading = true;
 	sock->p_recv_addr = buf;
 	sock->recv_max_len = max_len;
+    ictx.last_socket_id = id;
 	snprintf(buffer_send, sizeof(buffer_send), "AT+QIRD=%d", id);
+    LOG_WRN("ec20_recv 2-0");
 	ret = send_at_cmd(buffer_send, &sock->sem_read_ready, MDM_CMD_READ_TIMEOUT);
+    LOG_WRN("ec20_recv 2-1");
 	if (ret < 0) {
 		LOG_ERR("Read request failed.");
 		goto error;
 	}
 	k_sem_take(&ictx.sem_response, MDM_CMD_READ_TIMEOUT);
 
+    LOG_WRN("ec20_recv 3");
 	LOG_DBG("Socket read %d bytes.", sock->bytes_read);
 	return sock->bytes_read;
 error:
