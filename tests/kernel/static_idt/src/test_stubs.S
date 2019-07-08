@@ -16,8 +16,7 @@ testing.
 
 #include <arch/cpu.h>
 #include <kernel_structs.h>
-#include <arch/x86/asm.h>
-#include <asm_inline.h>
+#include <arch/x86/ia32/asm.h>
 
 /* imports (internal APIs) */
 

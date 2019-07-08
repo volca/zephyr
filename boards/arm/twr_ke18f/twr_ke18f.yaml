@@ -15,3 +15,5 @@ supported:
   - hwinfo
   - spi
   - adc
+  - can
+  - watchdog

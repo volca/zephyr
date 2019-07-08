@@ -1,5 +1,5 @@
 /** @file
- *  @brief GATT Device Infromation Service
+ *  @brief GATT Device Information Service
  */
 
 /*
@@ -24,8 +24,6 @@
 #include <bluetooth/conn.h>
 #include <bluetooth/uuid.h>
 #include <bluetooth/gatt.h>
-
-#include "../host/settings.h"
 
 #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_SERVICE)
 #define LOG_MODULE_NAME bt_dis
@@ -235,5 +233,6 @@ static int dis_set(const char *name, size_t len_rd,
 	return 0;
 }
 
-BT_SETTINGS_DEFINE(dis, dis_set, NULL, NULL);
+SETTINGS_STATIC_HANDLER_DEFINE(bt_dis, "bt/dis", NULL, dis_set, NULL, NULL);
+
 #endif /* CONFIG_BT_GATT_DIS_SETTINGS && CONFIG_BT_SETTINGS*/

@@ -23,7 +23,7 @@ void settings_init(void);
 int settings_backend_init(void);
 
 #ifdef CONFIG_SETTINGS_FS
-#include <fs.h>
+#include <fs/fs.h>
 
 static struct settings_file config_init_settings_file = {
 	.cf_name = CONFIG_SETTINGS_FS_FILE,
@@ -62,7 +62,7 @@ int settings_backend_init(void)
 }
 
 #elif defined(CONFIG_SETTINGS_FCB)
-#include "fcb.h"
+#include <fs/fcb.h>
 #include "settings/settings_fcb.h"
 
 static struct flash_sector settings_fcb_area[CONFIG_SETTINGS_FCB_NUM_AREAS + 1];

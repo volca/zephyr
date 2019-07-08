@@ -12,7 +12,7 @@
 #include "settings_priv.h"
 
 #ifdef CONFIG_SETTINGS_USE_BASE64
-#include "base64.h"
+#include <sys/base64.h>
 #endif
 
 #include <logging/log.h>
@@ -312,7 +312,7 @@ int settings_line_val_read(off_t val_off, off_t off, char *out, size_t len_req,
 			return rc;
 		}
 
-		enc_buf[read_size] = 0; /* breaking guaranted */
+		enc_buf[read_size] = 0; /* breaking guaranteed */
 		read_size = strlen(enc_buf);
 
 		if (read_size == 0 || read_size % 4) {
@@ -396,7 +396,7 @@ size_t settings_line_val_get_len(off_t val_off, void *read_cb_ctx)
 
 /**
  * @param line_loc offset of the settings line, expect that it is aligned to rbs physically.
- * @param seek offset form the line begining.
+ * @param seek offset form the line beginning.
  * @retval 0 : read proper name
  * 1 : when read unproper name
  * -ERCODE for storage errors
@@ -534,7 +534,7 @@ void settings_line_load_cb(const char *name, void *val_read_cb_ctx, off_t off,
 			   void *cb_arg)
 {
 	const char *name_key;
-	struct settings_handler *ch;
+	struct settings_handler_static *ch;
 	struct settings_line_read_value_cb_ctx value_ctx;
 	int rc;
 	size_t len;

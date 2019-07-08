@@ -15,8 +15,8 @@
  */
 
 #include <soc.h>
-#include <clock_control.h>
-#include <system_timer.h>
+#include <drivers/clock_control.h>
+#include <drivers/timer/system_timer.h>
 #include <sys_clock.h>
 
 /* RTC registers. */

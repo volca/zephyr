@@ -31,7 +31,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <ctype.h>
 #include <errno.h>
 #include <init.h>
-#include <misc/printk.h>
+#include <sys/printk.h>
 #include <net/net_ip.h>
 #include <net/http_parser_url.h>
 #include <net/socket.h>
@@ -301,7 +301,7 @@ get_block_ctx(const u8_t *token, u8_t tkl, struct block_context **ctx)
 		if (block1_contexts[i].tkl == tkl &&
 		    memcmp(token, block1_contexts[i].token, tkl) == 0) {
 			*ctx = &block1_contexts[i];
-			/* refresh timestmap */
+			/* refresh timestamp */
 			(*ctx)->timestamp = k_uptime_get();
 			break;
 		}
@@ -3795,7 +3795,7 @@ static int lwm2m_engine_service(void)
 		 * - current timestamp > last_timestamp + max_period_sec
 		 */
 		} else if (timestamp > obs->last_timestamp +
-				K_SECONDS(obs->min_period_sec)) {
+				K_SECONDS(obs->max_period_sec)) {
 			obs->last_timestamp = k_uptime_get();
 			generate_notify_message(obs, false);
 		}

@@ -13,9 +13,9 @@
 #include <kernel.h>
 #include <arch/cpu.h>
 #include <clock_control/arm_clock_control.h>
-#include <misc/__assert.h>
+#include <sys/__assert.h>
 #include <init.h>
-#include <uart.h>
+#include <drivers/uart.h>
 #include <linker/sections.h>
 
 /* UART registers struct */

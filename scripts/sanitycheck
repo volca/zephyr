@@ -189,6 +189,7 @@ import serial
 import concurrent
 import concurrent.futures
 import xml.etree.ElementTree as ET
+import resource
 from xml.sax.saxutils import escape
 from collections import OrderedDict
 from itertools import islice
@@ -226,7 +227,6 @@ LAST_SANITY_XUNIT = os.path.join(ZEPHYR_BASE, "scripts", "sanity_chk",
                                  "last_sanity.xml")
 RELEASE_DATA = os.path.join(ZEPHYR_BASE, "scripts", "sanity_chk",
                             "sanity_last_release.csv")
-JOBS = multiprocessing.cpu_count() * 2
 
 if os.isatty(sys.stdout.fileno()):
     TERMINAL = True
@@ -571,7 +571,7 @@ class BinaryHandler(Handler):
         else:
             command = [self.binary]
 
-        if shutil.which("valgrind") and self.valgrind:
+        if self.valgrind and shutil.which("valgrind"):
             command = ["valgrind", "--error-exitcode=2",
                        "--leak-check=full",
                        "--suppressions="+ZEPHYR_BASE+"/scripts/valgrind.supp",
@@ -581,6 +581,9 @@ class BinaryHandler(Handler):
         verbose("Spawning process: " +
                 " ".join(shlex.quote(word) for word in command) + os.linesep +
                 "Spawning process in directory: " + self.outdir)
+
+        start_time = time.time();
+
         with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.outdir) as proc:
             verbose("Spawning BinaryHandler Thread for %s" % self.name)
             t = threading.Thread(target=self._output_reader, args=(proc, harness, ))
@@ -593,6 +596,8 @@ class BinaryHandler(Handler):
                 t.join()
             proc.wait()
             self.returncode = proc.returncode
+
+        self.metrics["handler_time"] = time.time() - start_time;
 
         if options.enable_coverage:
             returncode = subprocess.call(["GCOV_PREFIX=" + self.outdir,
@@ -811,12 +816,14 @@ class QEMUHandler(Handler):
                     out_state = harness.state
 
                 # if we get some state, that means test is doing well, we reset
-                # the timeout and wait for 2 more seconds just in case we have
-                # crashed after test has completed
+                # the timeout and wait for 2 more seconds to catch anything
+                # printed late. We wait much longer if code
+                # coverage is enabled since dumping this information can
+                # take some time.
                 if not timeout_extended or harness.capture_coverage:
                     timeout_extended= True
                     if harness.capture_coverage:
-                        timeout_time = time.time() + 10
+                        timeout_time = time.time() + 30
                     else:
                         timeout_time = time.time() + 2
 
@@ -1268,6 +1275,7 @@ class MakeGenerator:
             handler = QEMUHandler(instance, "qemu")
         elif type == "native":
             handler = BinaryHandler(instance, "native")
+            # defined by __build_dir in cmake/boilerplate.cmake
             handler.binary = os.path.join(outdir, "zephyr", "zephyr.exe")
             if options.enable_coverage:
                 args += ["EXTRA_LDFLAGS=--coverage"]
@@ -1385,9 +1393,11 @@ class MakeGenerator:
 
             cmd = ["make", "-k", "-j", str(JOBS), "-f", tf.name, "all"]
 
-            # assure language neutral environemnt
+            # assure language neutral environment
             make_env = os.environ.copy()
             make_env['LC_MESSAGES'] = 'C.UTF-8'
+            verbose("In %s, spawning: " % os.getcwd()
+                    + " ".join(shlex.quote(word)for word in cmd))
             p = subprocess.Popen(cmd, stderr=subprocess.PIPE,
                                  stdout=devnull, env=make_env)
 
@@ -1740,7 +1750,7 @@ class TestCase:
     def get_unique(self, testcase_root, workdir, name):
 
         canonical_testcase_root = os.path.realpath(testcase_root)
-        if canonical_testcase_root.startswith(canonical_zephyr_base):
+        if Path(canonical_zephyr_base) in Path(canonical_testcase_root).parents:
             # This is in ZEPHYR_BASE, so include path in name for uniqueness
             # FIXME: We should not depend on path of test for unique names.
             relative_tc_root = os.path.relpath(canonical_testcase_root,
@@ -2901,8 +2911,8 @@ Artificially long but functional example:
 
     parser.add_argument(
         "-j", "--jobs", type=int,
-        help="Number of jobs for building, defaults to number of CPU threads "
-        "overcommited by factor 2")
+        help="Number of jobs for building, defaults to number of CPU threads, "
+        "overcommited by factor 2 when --build-only")
 
     parser.add_argument(
         "--device-testing", action="store_true",
@@ -2914,7 +2924,7 @@ Artificially long but functional example:
         help="Specify a fixture that a board might support")
     parser.add_argument(
         "--device-serial",
-		help="Serial device for accessing the board (e.g., /dev/ttyACM0)")
+        help="Serial device for accessing the board (e.g., /dev/ttyACM0)")
     parser.add_argument(
             "--show-footprint", action="store_true",
             help="Show footprint statistics and deltas since last release."
@@ -3003,19 +3013,30 @@ Artificially long but functional example:
          west flash -- --board-id=foobar
         """
     )
-    parser.add_argument("--gcov-tool", default="gcov",
-                        help="Path to the gcov tool. Default is gcov in the path.")
+
+    if "ZEPHYR_SDK_INSTALL_DIR" in os.environ:
+        # Use the x86 build of GCOV from the SDK. This can parse gcov data
+        # from any arch built with the same GCC version.
+        gcov_bin = os.path.join(os.environ["ZEPHYR_SDK_INSTALL_DIR"],
+                "i586-zephyr-elf/bin/i586-zephyr-elf-gcov")
+    else:
+        # No SDK in use, just rely on PATH to find it
+        gcov_bin = "gcov"
+
+    parser.add_argument("--gcov-tool", default=gcov_bin,
+                        help="Path to the gcov tool. Default is %s" % gcov_bin)
 
     parser.add_argument("--enable-coverage", action="store_true",
                         help="Enable code coverage using gcov.")
 
     parser.add_argument("-C", "--coverage", action="store_true",
-                        help="Generate coverage reports. Implies --enable_coverage")
+                        help="Generate coverage reports. Implies "
+                        "--enable_coverage and --enable-slow")
 
-    coverage_platforms = ["native_posix", "nrf52_bsim"]
-    parser.add_argument("--coverage-platform", action="append", default=coverage_platforms,
+    parser.add_argument("--coverage-platform", action="append", default=[],
                         help="Plarforms to run coverage reports on. "
-                        "This option may be used multiple times.")
+                        "This option may be used multiple times. "
+                        "Default to what was selected with --platform.")
 
     return parser.parse_args()
 
@@ -3094,6 +3115,9 @@ def chatty_test_cb(instances, goals, goal):
 
     if goal.handler:
         handler_type = goal.handler.type_str
+        htime = goal.metrics.get("handler_time", None)
+        if htime:
+            handler_type += " {:.3f}s".format(htime)
     else:
         handler_type = "build"
 
@@ -3229,10 +3253,16 @@ def main():
     global VERBOSE, INLINE_LOGS, JOBS, log_file
     global options
     global run_individual_tests
+
+    # XXX: Workaround for #17239
+    resource.setrlimit(resource.RLIMIT_NOFILE, (4096, 4096))
     options = parse_arguments()
 
     if options.coverage:
         options.enable_coverage = True
+        options.enable_slow = True
+        if not options.coverage_platform:
+            options.coverage_platform = options.platform
 
     if options.size:
         for fn in options.size:
@@ -3251,6 +3281,10 @@ def main():
 
     if options.jobs:
         JOBS = options.jobs
+    elif options.build_only:
+        JOBS = multiprocessing.cpu_count() * 2
+    else:
+        JOBS = multiprocessing.cpu_count()
 
     # Decrease JOBS for Ninja, if jobs weren't explicitly set
     if options.ninja and not options.jobs:

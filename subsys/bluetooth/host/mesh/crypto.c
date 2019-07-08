@@ -11,8 +11,8 @@
 #include <errno.h>
 #include <toolchain.h>
 #include <zephyr/types.h>
-#include <misc/byteorder.h>
-#include <misc/util.h>
+#include <sys/byteorder.h>
+#include <sys/util.h>
 
 #include <tinycrypt/constants.h>
 #include <tinycrypt/utils.h>

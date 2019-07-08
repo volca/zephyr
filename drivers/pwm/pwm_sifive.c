@@ -8,9 +8,9 @@
 
 LOG_MODULE_REGISTER(pwm_sifive, CONFIG_PWM_LOG_LEVEL);
 
-#include <sys_io.h>
+#include <sys/sys_io.h>
 #include <device.h>
-#include <pwm.h>
+#include <drivers/pwm.h>
 
 /* Macros */
 
