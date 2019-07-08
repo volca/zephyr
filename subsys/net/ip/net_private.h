@@ -11,7 +11,7 @@
  */
 
 #include <errno.h>
-#include <misc/printk.h>
+#include <sys/printk.h>
 #include <net/net_context.h>
 #include <net/net_pkt.h>
 
@@ -56,6 +56,12 @@ char *net_sprint_addr(sa_family_t af, const void *addr);
 #define net_sprint_ipv4_addr(_addr) net_sprint_addr(AF_INET, _addr)
 
 #define net_sprint_ipv6_addr(_addr) net_sprint_addr(AF_INET6, _addr)
+
+#if defined(CONFIG_NET_CONTEXT_TIMESTAMP)
+int net_context_get_timestamp(struct net_context *context,
+			      struct net_pkt *pkt,
+			      struct net_ptp_time *timestamp);
+#endif
 
 #if defined(CONFIG_NET_GPTP)
 /**
@@ -156,7 +162,7 @@ static inline void net_pkt_hexdump(struct net_pkt *pkt, const char *str)
 	snprintk(pkt_str, sizeof(pkt_str), "%p", pkt);
 
 	while (buf) {
-		LOG_HEXDUMP_DBG(buf->data, buf->len, pkt_str);
+		LOG_HEXDUMP_DBG(buf->data, buf->len, log_strdup(pkt_str));
 		buf = buf->frags;
 	}
 }

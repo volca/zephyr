@@ -5,7 +5,7 @@
  */
 
 #include <init.h>
-#include <pinmux.h>
+#include <drivers/pinmux.h>
 #include <fsl_port.h>
 
 static int twr_ke18f_pinmux_init(struct device *dev)
@@ -100,6 +100,12 @@ static int twr_ke18f_pinmux_init(struct device *dev)
 	/* LPI2C1 SCL, SDA - Elevator connector */
 	pinmux_pin_set(portd, 9, PORT_PCR_MUX(kPORT_MuxAlt2));
 	pinmux_pin_set(portd, 8, PORT_PCR_MUX(kPORT_MuxAlt2));
+#endif
+
+#if CONFIG_CAN_0
+	/* FlexCAN0 RX, TX */
+	pinmux_pin_set(porte, 4, PORT_PCR_MUX(kPORT_MuxAlt5));
+	pinmux_pin_set(porte, 5, PORT_PCR_MUX(kPORT_MuxAlt5));
 #endif
 
 	/* FXOS8700 INT1, INT2, RST */

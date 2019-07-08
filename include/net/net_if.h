@@ -20,7 +20,7 @@
  */
 
 #include <device.h>
-#include <misc/slist.h>
+#include <sys/slist.h>
 
 #include <net/net_core.h>
 #include <net/hostname.h>
@@ -841,6 +841,16 @@ struct net_if_addr *net_if_ipv6_addr_lookup_by_iface(struct net_if *iface,
 						     struct in6_addr *addr);
 
 /**
+ * @brief Check if this IPv6 address belongs to one of the interface indices.
+ *
+ * @param addr IPv6 address
+ *
+ * @return >0 if address was found in given network interface index,
+ * all other values mean address was not found
+ */
+__syscall int net_if_ipv6_addr_lookup_by_index(const struct in6_addr *addr);
+
+/**
  * @brief Add a IPv6 address to an interface
  *
  * @param iface Network interface
@@ -854,6 +864,21 @@ struct net_if_addr *net_if_ipv6_addr_add(struct net_if *iface,
 					 struct in6_addr *addr,
 					 enum net_addr_type addr_type,
 					 u32_t vlifetime);
+
+/**
+ * @brief Add a IPv6 address to an interface by index
+ *
+ * @param index Network interface index
+ * @param addr IPv6 address
+ * @param addr_type IPv6 address type
+ * @param vlifetime Validity time for this address
+ *
+ * @return True if ok, false if address could not be added
+ */
+__syscall bool net_if_ipv6_addr_add_by_index(int index,
+					     struct in6_addr *addr,
+					     enum net_addr_type addr_type,
+					     u32_t vlifetime);
 
 /**
  * @brief Update validity lifetime time of an IPv6 address.
@@ -874,6 +899,16 @@ void net_if_ipv6_addr_update_lifetime(struct net_if_addr *ifaddr,
  */
 bool net_if_ipv6_addr_rm(struct net_if *iface, const struct in6_addr *addr);
 
+/**
+ * @brief Remove an IPv6 address from an interface by index
+ *
+ * @param index Network interface index
+ * @param addr IPv6 address
+ *
+ * @return True if successfully removed, false otherwise
+ */
+__syscall bool net_if_ipv6_addr_rm_by_index(int index,
+					    const struct in6_addr *addr);
 
 /**
  * @brief Add a IPv6 multicast address to an interface
@@ -1441,7 +1476,43 @@ struct net_if_addr *net_if_ipv4_addr_add(struct net_if *iface,
  *
  * @return True if successfully removed, false otherwise
  */
-bool net_if_ipv4_addr_rm(struct net_if *iface,  struct in_addr *addr);
+bool net_if_ipv4_addr_rm(struct net_if *iface, const struct in_addr *addr);
+
+/**
+ * @brief Check if this IPv4 address belongs to one of the interface indices.
+ *
+ * @param addr IPv4 address
+ *
+ * @return >0 if address was found in given network interface index,
+ * all other values mean address was not found
+ */
+__syscall int net_if_ipv4_addr_lookup_by_index(const struct in_addr *addr);
+
+/**
+ * @brief Add a IPv4 address to an interface by network interface index
+ *
+ * @param index Network interface index
+ * @param addr IPv4 address
+ * @param addr_type IPv4 address type
+ * @param vlifetime Validity time for this address
+ *
+ * @return True if ok, false if the address could not be added
+ */
+__syscall bool net_if_ipv4_addr_add_by_index(int index,
+					     struct in_addr *addr,
+					     enum net_addr_type addr_type,
+					     u32_t vlifetime);
+
+/**
+ * @brief Remove a IPv4 address from an interface by interface index
+ *
+ * @param index Network interface index
+ * @param addr IPv4 address
+ *
+ * @return True if successfully removed, false otherwise
+ */
+__syscall bool net_if_ipv4_addr_rm_by_index(int index,
+					    const struct in_addr *addr);
 
 /**
  * @brief Add a IPv4 multicast address to an interface
@@ -1581,21 +1652,19 @@ struct in_addr *net_if_ipv4_get_global_addr(struct net_if *iface,
  * @param iface Interface to use.
  * @param netmask IPv4 netmask
  */
-static inline void net_if_ipv4_set_netmask(struct net_if *iface,
-					   const struct in_addr *netmask)
-{
-#if defined(CONFIG_NET_IPV4)
-	if (net_if_config_ipv4_get(iface, NULL) < 0) {
-		return;
-	}
+void net_if_ipv4_set_netmask(struct net_if *iface,
+			     const struct in_addr *netmask);
 
-	if (!iface->config.ip.ipv4) {
-		return;
-	}
-
-	net_ipaddr_copy(&iface->config.ip.ipv4->netmask, netmask);
-#endif
-}
+/**
+ * @brief Set IPv4 netmask for an interface index.
+ *
+ * @param index Network interface index
+ * @param netmask IPv4 netmask
+ *
+ * @return True if netmask was added, false otherwise.
+ */
+__syscall bool net_if_ipv4_set_netmask_by_index(int index,
+						const struct in_addr *netmask);
 
 /**
  * @brief Set IPv4 gateway for an interface.
@@ -1603,21 +1672,17 @@ static inline void net_if_ipv4_set_netmask(struct net_if *iface,
  * @param iface Interface to use.
  * @param gw IPv4 address of an gateway
  */
-static inline void net_if_ipv4_set_gw(struct net_if *iface,
-				      struct in_addr *gw)
-{
-#if defined(CONFIG_NET_IPV4)
-	if (net_if_config_ipv4_get(iface, NULL) < 0) {
-		return;
-	}
+void net_if_ipv4_set_gw(struct net_if *iface, const struct in_addr *gw);
 
-	if (!iface->config.ip.ipv4) {
-		return;
-	}
-
-	net_ipaddr_copy(&iface->config.ip.ipv4->gw, gw);
-#endif
-}
+/**
+ * @brief Set IPv4 gateway for an interface index.
+ *
+ * @param index Network interface index
+ * @param gw IPv4 address of an gateway
+ *
+ * @return True if gateway was added, false otherwise.
+ */
+__syscall bool net_if_ipv4_set_gw_by_index(int index, const struct in_addr *gw);
 
 /**
  * @brief Get a network interface that should be used when sending
@@ -2025,6 +2090,8 @@ struct net_if_api {
 #ifdef __cplusplus
 }
 #endif
+
+#include <syscalls/net_if.h>
 
 /**
  * @}

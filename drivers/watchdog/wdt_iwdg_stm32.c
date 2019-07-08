@@ -6,7 +6,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <watchdog.h>
+#include <drivers/watchdog.h>
 #include <soc.h>
 #include <errno.h>
 #include <assert.h>
@@ -115,7 +115,7 @@ static int iwdg_stm32_install_timeout(struct device *dev,
 	tickstart = k_uptime_get_32();
 
 	while (LL_IWDG_IsReady(iwdg) == 0) {
-		/* Wait untill WVU, RVU, PVU are reset before updating  */
+		/* Wait until WVU, RVU, PVU are reset before updating  */
 		if ((k_uptime_get_32() - tickstart) > IWDG_DEFAULT_TIMEOUT) {
 			return -ENODEV;
 		}

@@ -16,10 +16,10 @@
 #include <toolchain.h>
 #include <linker/sections.h>
 #include <wait_q.h>
-#include <misc/dlist.h>
+#include <sys/dlist.h>
 #include <init.h>
 #include <syscall_handler.h>
-#include <misc/__assert.h>
+#include <sys/__assert.h>
 #include <kernel_internal.h>
 
 struct k_pipe_desc {
@@ -662,7 +662,7 @@ int z_impl_k_pipe_get(struct k_pipe *pipe, void *data, size_t bytes_to_read,
 		desc->buffer         += bytes_copied;
 		desc->bytes_to_xfer  -= bytes_copied;
 
-		/* Write request has been satsified */
+		/* Write request has been satisfied */
 		pipe_thread_ready(thread);
 
 		thread = (struct k_thread *)sys_dlist_get(&xfer_list);

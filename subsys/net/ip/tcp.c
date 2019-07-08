@@ -24,7 +24,7 @@ LOG_MODULE_REGISTER(net_tcp, CONFIG_NET_TCP_LOG_LEVEL);
 #include <net/net_pkt.h>
 #include <net/net_ip.h>
 #include <net/net_context.h>
-#include <misc/byteorder.h>
+#include <sys/byteorder.h>
 
 #include "connection.h"
 #include "net_private.h"
@@ -1101,7 +1101,7 @@ bool net_tcp_ack_received(struct net_context *ctx, u32_t ack)
 		/* Last sequence number in this packet. */
 		last_seq = sys_get_be32(tcp_hdr->seq) + seq_len - 1;
 
-		/* Ack number should be strictly greater to acknowleged numbers
+		/* Ack number should be strictly greater to acknowledged numbers
 		 * below it. For example, ack no. 10 acknowledges all numbers up
 		 * to and including 9.
 		 */

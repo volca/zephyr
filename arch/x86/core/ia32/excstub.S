@@ -15,8 +15,8 @@
  */
 
 #include <kernel_structs.h>
-#include <arch/x86/asm.h>
-#include <arch/x86/arch.h> /* For MK_ISR_NAME */
+#include <arch/x86/ia32/asm.h>
+#include <arch/x86/ia32/arch.h> /* For MK_ISR_NAME */
 #include <offsets_short.h>
 
 

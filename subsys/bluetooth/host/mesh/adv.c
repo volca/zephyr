@@ -8,8 +8,8 @@
  */
 
 #include <zephyr.h>
-#include <misc/stack.h>
-#include <misc/util.h>
+#include <debug/stack.h>
+#include <sys/util.h>
 
 #include <net/buf.h>
 #include <bluetooth/bluetooth.h>

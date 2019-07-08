@@ -7,7 +7,8 @@
 #include <errno.h>
 #include <zephyr/types.h>
 #include <device.h>
-#include <clock_control.h>
+#include <drivers/entropy.h>
+#include <drivers/clock_control.h>
 #include <drivers/clock_control/nrf_clock_control.h>
 
 #include "hal/ccm.h"
@@ -16,11 +17,12 @@
 
 #include "util/mem.h"
 #include "util/memq.h"
-
 #include "util/mayfly.h"
+
 #include "ticker/ticker.h"
 
 #include "lll.h"
+#include "lll_vendor.h"
 #include "lll_internal.h"
 
 #define LOG_MODULE_NAME bt_ctlr_llsw_nordic_lll
@@ -39,6 +41,9 @@ static struct {
 static struct {
 	struct device *clk_hf;
 } lll;
+
+/* Entropy device */
+static struct device *dev_entropy;
 
 static int init_reset(void);
 static int prepare(lll_is_abort_cb_t is_abort_cb, lll_abort_cb_t abort_cb,
@@ -108,6 +113,12 @@ int lll_init(void)
 	struct device *clk_k32;
 	int err;
 
+	/* Get reference to entropy device */
+	dev_entropy = device_get_binding(CONFIG_ENTROPY_NAME);
+	if (!dev_entropy) {
+		return -ENODEV;
+	}
+
 	/* Initialise LLL internals */
 	event.curr.abort_cb = NULL;
 
@@ -148,6 +159,11 @@ int lll_init(void)
 	irq_enable(NRF5_IRQ_SWI5_IRQn);
 
 	return 0;
+}
+
+u8_t lll_entropy_get(u8_t len, void *rand)
+{
+	return entropy_get_entropy_isr(dev_entropy, rand, len, 0);
 }
 
 int lll_reset(void)
@@ -343,10 +359,24 @@ u32_t lll_evt_offset_get(struct evt_hdr *evt)
 u32_t lll_preempt_calc(struct evt_hdr *evt, u8_t ticker_id,
 		       u32_t ticks_at_event)
 {
-	/* TODO: */
+	u32_t ticks_now = ticker_ticks_now_get();
+	u32_t diff;
+
+	diff = ticker_ticks_diff_get(ticks_now, ticks_at_event);
+	diff += HAL_TICKER_CNTR_CMP_OFFSET_MIN;
+	if (!(diff & BIT(HAL_TICKER_CNTR_MSBIT)) &&
+	    (diff > HAL_TICKER_US_TO_TICKS(EVENT_OVERHEAD_START_US))) {
+		/* TODO: for Low Latency Feature with Advanced XTAL feature.
+		 * 1. Release retained HF clock.
+		 * 2. Advance the radio event to accommodate normal prepare
+		 *    duration.
+		 * 3. Increase the preempt to start ticks for future events.
+		 */
+		return 1;
+	}
+
 	return 0;
 }
-
 
 void lll_chan_set(u32_t chan)
 {

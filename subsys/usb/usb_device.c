@@ -58,13 +58,13 @@
 
 #include <errno.h>
 #include <stddef.h>
-#include <misc/util.h>
-#include <misc/__assert.h>
+#include <sys/util.h>
+#include <sys/__assert.h>
 #include <init.h>
 #if defined(CONFIG_USB_VBUS_GPIO)
-#include <gpio.h>
+#include <drivers/gpio.h>
 #endif
-#include <misc/byteorder.h>
+#include <sys/byteorder.h>
 #include <usb/usb_device.h>
 #include <usb/usbstruct.h>
 #include <usb/usb_common.h>

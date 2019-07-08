@@ -16,10 +16,10 @@
 
 #include <kernel.h>
 #include <kernel_structs.h>
-#include <misc/printk.h>
-#include <arch/x86/irq_controller.h>
-#include <arch/x86/segmentation.h>
-#include <exception.h>
+#include <sys/printk.h>
+#include <drivers/interrupt_controller/sysapic.h>
+#include <arch/x86/ia32/segmentation.h>
+#include <ia32/exception.h>
 #include <inttypes.h>
 #include <exc_handle.h>
 #include <logging/log_ctrl.h>

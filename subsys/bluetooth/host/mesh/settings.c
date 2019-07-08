@@ -9,8 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
-#include <misc/util.h>
-#include <misc/byteorder.h>
+#include <sys/util.h>
+#include <sys/byteorder.h>
 
 #include <settings/settings.h>
 
@@ -24,7 +24,6 @@
 #define LOG_MODULE_NAME bt_mesh_settings
 #include "common/log.h"
 
-#include "../settings.h"
 #include "mesh.h"
 #include "net.h"
 #include "crypto.h"
@@ -69,7 +68,7 @@ struct hb_pub_val {
 	      indefinite:1;
 };
 
-/* Miscelaneous configuration server model states */
+/* Miscellaneous configuration server model states */
 struct cfg_val {
 	u8_t net_transmit;
 	u8_t relay;
@@ -824,7 +823,8 @@ static int mesh_commit(void)
 	return 0;
 }
 
-BT_SETTINGS_DEFINE(mesh, mesh_set, mesh_commit, NULL);
+SETTINGS_STATIC_HANDLER_DEFINE(bt_mesh, "bt/mesh", NULL, mesh_set, mesh_commit,
+			       NULL);
 
 /* Pending flags that use K_NO_WAIT as the storage timeout */
 #define NO_WAIT_PENDING_BITS (BIT(BT_MESH_NET_PENDING) |           \

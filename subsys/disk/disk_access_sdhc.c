@@ -8,11 +8,11 @@
 
 LOG_MODULE_REGISTER(sdhc, CONFIG_DISK_LOG_LEVEL);
 
-#include <disk_access.h>
-#include <gpio.h>
-#include <misc/byteorder.h>
-#include <spi.h>
-#include <crc.h>
+#include <disk/disk_access.h>
+#include <drivers/gpio.h>
+#include <sys/byteorder.h>
+#include <drivers/spi.h>
+#include <sys/crc.h>
 
 #define SDHC_SECTOR_SIZE 512
 #define SDHC_CMD_SIZE 6
@@ -902,10 +902,10 @@ static int sdhc_init(struct device *dev)
 	data->cfg.frequency = SDHC_INITIAL_SPEED;
 	data->cfg.operation = SPI_WORD_SET(8) | SPI_HOLD_ON_CS;
 	data->cfg.slave = DT_INST_0_ZEPHYR_MMC_SPI_SLOT_BASE_ADDRESS;
-	data->cs = device_get_binding(DT_INST_0_ZEPHYR_MMC_SPI_SLOT_CS_GPIO_CONTROLLER);
+	data->cs = device_get_binding(DT_INST_0_ZEPHYR_MMC_SPI_SLOT_CS_GPIOS_CONTROLLER);
 	__ASSERT_NO_MSG(data->cs != NULL);
 
-	data->pin = DT_INST_0_ZEPHYR_MMC_SPI_SLOT_CS_GPIO_PIN;
+	data->pin = DT_INST_0_ZEPHYR_MMC_SPI_SLOT_CS_GPIOS_PIN;
 
 	disk_sdhc_init(dev);
 
