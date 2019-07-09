@@ -648,12 +648,10 @@ static void on_cmd_read_ready(struct net_buf **buf, u16_t len)
 {
 	struct ec20_socket *sock;
 	char buffer[10];
-	u16_t bytes_read;
-	u8_t id;
+	u16_t bytes_read, i;
+    size_t out_len;
+	u8_t id, c = 0U;
 
-
-	/* skip the first line, which should be ^SISR: */
-	
 	if (ictx.last_socket_id < MDM_BASE_SOCKET_NUM) {
         // AT+QIRD=<socket_id>
         net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
@@ -665,17 +663,24 @@ static void on_cmd_read_ready(struct net_buf **buf, u16_t len)
 
 	sock = &ictx.sockets[id];
     LOG_WRN("on read ready %d reading %d", id, sock->is_in_reading);
+    char test[1280];
 	if (sock->is_in_reading) {
-        net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
+        out_len = net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
 		bytes_read = atoi(buffer);
 		LOG_DBG("Reported %d bytes to be read. len: %d", bytes_read, len);
-		net_buf_skipcrlf(buf);
-		if (!*buf) {
-			LOG_DBG("Data read error.");
-			return;
-		}
-		net_buf_linearize(sock->p_recv_addr, sock->recv_max_len,
-				  *buf, 0, bytes_read);
+        // skip new line
+        for (i = 0; i < out_len; i++) {
+            net_buf_pull_u8(*buf);
+        }
+
+        for (i = 0; i < bytes_read; i++) {
+            c = net_buf_pull_u8(*buf);
+            test[i] = c;
+        }
+        test[i] = 0;
+
+        printf("Read resp %s\n", test);
+
 		sock->bytes_read = bytes_read;
 		sock->is_in_reading = false;
 	} else {
@@ -794,14 +799,12 @@ static void modem_rx(void)
 		/* UNSOLICITED RESPONSE CODES */
 		CMD_HANDLER("+QICLOSE: ", socknotifyclose),
 		CMD_HANDLER("+QIURC: \"closed\",", socknotifyclose),
-		CMD_HANDLER("+QIURC: \"recv\",", socknotifydata),
 		CMD_HANDLER("SEND OK", sockwrote),
 		CMD_HANDLER("+QIURC: \"dnsgip\",\"", getaddr),
 
         /* SOCKET OPERATION RESPONSES */
 		CMD_HANDLER("+QIOPEN: ", write_ready),
 		CMD_HANDLER("+QIURC: \"recv\",", read_ready),
-		CMD_HANDLER("+QIRD: ", read_ready),
 		CMD_HANDLER("AT+QISEND=", socksend),
 		CMD_HANDLER("+QIURC \"error\",", socket_error),
 	};
@@ -1245,7 +1248,7 @@ static int ec20_connect(int id, const struct sockaddr *addr, socklen_t addrlen) 
     /* <remote_port>,<local_port>,<access_mode>) to connect TCP server */
     /* contextID   = 1 : use same contextID as AT+QICSGP & AT+QIACT */
     /* local_port  = 0 : local port assigned automatically */
-    /* access_mode = 1 : direct  mode */
+    /* access_mode = 0 : Buffer mode */
 
 
     snprintk(buf, sizeof(buf), "AT+QIOPEN=1,%d,\"%s\",\"%s\",%d,0,0", 
