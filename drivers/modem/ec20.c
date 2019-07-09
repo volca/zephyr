@@ -206,7 +206,7 @@ struct cmd_handler {
 static struct modem_iface_ctx ictx;
 
 static void modem_read_rx(struct net_buf **buf);
-static int ec20_close(int id);
+static void clean_socket(int id);
 
 /*** Verbose Debugging Functions ***/
 #if defined(ENABLE_VERBOSE_MODEM_RECV_HEXDUMP)
@@ -587,15 +587,25 @@ static void on_cmd_socknotifyclose(struct net_buf **buf, u16_t len)
 		return;
 	}
 
-    LOG_WRN("socket close");
-
-	/* TODO: handle URC socket close */
+    clean_socket(id);
 }
 
 /* Handler: +QIURC: "recv",<socket_id> */
 static void on_cmd_socknotifydata(struct net_buf **buf, u16_t len)
 {
-    k_sem_give(&ictx.sem_response);
+	char value[2];
+    struct ec20_socket *sock = NULL;
+	int id;
+
+	/* make sure only a single digit is picked up for socket_id */
+	value[0] = net_buf_pull_u8(*buf);
+	len--;
+	value[1] = 0;
+
+	id = atoi(value);
+    sock = &ictx.sockets[id];
+    //k_sem_give(&ictx.sem_response);
+    k_sem_give(&sock->sem_read_ready);
 }
 
 /* Handler: +QIURC: "dnsgip","<addr>" */
@@ -784,7 +794,7 @@ static void modem_rx(void)
 		/* UNSOLICITED RESPONSE CODES */
 		CMD_HANDLER("+QICLOSE: ", socknotifyclose),
 		CMD_HANDLER("+QIURC: \"closed\",", socknotifyclose),
-		//CMD_HANDLER("+QIURC: \"recv\",", socknotifydata),
+		CMD_HANDLER("+QIURC: \"recv\",", socknotifydata),
 		CMD_HANDLER("SEND OK", sockwrote),
 		CMD_HANDLER("+QIURC: \"dnsgip\",\"", getaddr),
 
@@ -1158,6 +1168,15 @@ error:
 	return ret;
 }
 
+static void clean_socket(int id) {
+    struct ec20_socket *sock = NULL;
+    sock = &ictx.sockets[id];
+	sock->context = NULL;
+	sock->in_use = false;
+	k_sem_reset(&sock->sem_read_ready);
+	k_sem_reset(&sock->sem_write_ready);
+}
+
 static int ec20_socket(int family,int type, int proto)
 {
     u8_t id;
@@ -1191,7 +1210,7 @@ static int ec20_close(int id) {
 
 	snprintf(buffer, sizeof(buffer), "AT+QICLOSE=%u", id);
     send_at_cmd(buffer, &ictx.sem_response, MDM_CMD_TIMEOUT);
-	ictx.sockets[id].context = NULL;
+    clean_socket(id);
 	return 0;
 }
 
@@ -1309,12 +1328,17 @@ static ssize_t ec20_recv(int id, void *buf, size_t max_len, int flags) {
 		return -EMSGSIZE;
 	}
 
+    if (!sock->in_use) {
+        LOG_WRN("ec20_recv no context");
+        return 0;
+    }
+
     LOG_WRN("ec20_recv 1");
 	if (!sock->data_ready) {
 		k_sem_take(&sock->sem_read_ready, K_FOREVER);
 	}
     LOG_WRN("ec20_recv 2");
-	sock->data_ready = false;
+	//sock->data_ready = false;
 	k_sem_reset(&sock->sem_read_ready);
 	k_sem_reset(&ictx.sem_response);
 	sock->is_in_reading = true;
