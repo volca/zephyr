@@ -625,7 +625,6 @@ static void on_cmd_read_ready(struct net_buf **buf, u16_t len)
     id = ictx.last_socket_id;
 
 	sock = &ictx.sockets[id];
-	k_sem_give(&sock->sem_read_ready);
 
     out_len = net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
     buffer[out_len] = 0;
@@ -657,20 +656,9 @@ static void on_cmd_read_ready(struct net_buf **buf, u16_t len)
     }
      sock->p_recv_addr[bytes_read] = 0;
 
-    /*
-    while(i < bytes_read) {
-        c = net_buf_pull_u8(*buf);
-        sock->p_recv_addr[i] = c;
-        if (!(*buf)->len) {
-            *buf = net_buf_frag_del(NULL, *buf);
-        }
-    }
-    sock->p_recv_addr[i] = 0;
-
-    */
     sock->bytes_read = bytes_read;
     sock->is_in_reading = false;
-	//k_sem_give(&sock->sem_read_ready);
+	k_sem_give(&sock->sem_read_ready);
 }
 
 static void on_cmd_socket_error(struct net_buf **buf, u16_t len)
@@ -760,7 +748,7 @@ static void modem_read_rx(struct net_buf **buf)
 /* RX thread */
 static void modem_rx(void)
 {
-	struct net_buf *rx_buf = NULL, *swap_buf = NULL;
+	struct net_buf *rx_buf = NULL;
 	struct net_buf *frag = NULL;
 	int i;
 	u16_t offset, len;
@@ -809,17 +797,6 @@ static void modem_rx(void)
 			if (!frag) {
 				break;
 			}
-
-            /*
-            if (len != offset) {
-                swap_buf = net_buf_clone(rx_buf, 10);
-                rx_buf = net_buf_frag_del(NULL, rx_buf);
-                modem_read_rx(&rx_buf);
-                net_buf_add_mem(swap_buf, rx_buf->data, rx_buf->len);
-                net_buf_unref(rx_buf);
-                rx_buf = swap_buf;
-            }
-            */
 
             memcpy(rx_tmp, rx_buf->data, rx_buf->len);
             rx_tmp[rx_buf->len] = 0;
@@ -1038,8 +1015,7 @@ restart:
 
 	/* wait for +CREG: 1 notification (20 seconds max) */
 	counter = 0;
-    // TODO change counter back to 20
-	while (counter++ < 10 && ictx.ev_creg != 1) {
+	while (counter++ < 20 && ictx.ev_creg != 1) {
 		k_sleep(K_SECONDS(1));
 	}
 
