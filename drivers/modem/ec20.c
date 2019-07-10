@@ -510,7 +510,6 @@ static void on_cmd_atcmdinfo_rssi(struct net_buf **buf, u16_t len)
 static void on_cmd_sockok(struct net_buf **buf, u16_t len)
 {
     k_sem_give(&ictx.sem_response);
-	LOG_INF("OK");
 }
 
 static void on_cmd_socksend(struct net_buf **buf, u16_t len)
@@ -661,6 +660,19 @@ static void on_cmd_read_ready(struct net_buf **buf, u16_t len)
 	k_sem_give(&sock->sem_read_ready);
 }
 
+// +CREG: 0,1
+static void on_cmd_socknotifycreg(struct net_buf **buf, u16_t len)
+{
+	char value[8];
+	size_t out_len;
+
+	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
+	value[out_len] = 0;
+	ictx.ev_creg = atoi(&value[2]);
+	ictx.ev_creg = (ictx.ev_creg == 1) || (ictx.ev_creg == 5) ? 1 : 0;
+	LOG_DBG("CREG:%d", ictx.ev_creg);
+}
+
 static void on_cmd_socket_error(struct net_buf **buf, u16_t len)
 {
 	char buffer[10];
@@ -771,6 +783,7 @@ static void modem_rx(void)
 		CMD_HANDLER("+QIURC: \"recv\",", socknotifydata),
 		CMD_HANDLER("+QIURC: \"dnsgip\",\"", getaddr),
 		CMD_HANDLER("SEND OK", sockwrote),
+        CMD_HANDLER("+CREG: ", socknotifycreg),
 
         /* SOCKET OPERATION RESPONSES */
 		CMD_HANDLER("+QIOPEN: ", write_ready),
@@ -1011,6 +1024,13 @@ restart:
 		goto error;
 	}
 
+	/* UNC messages for registration */
+	ret = send_at_cmd("AT+CREG?", &ictx.sem_response, MDM_CMD_TIMEOUT);
+	if (ret < 0) {
+		LOG_ERR("AT+CREG? ret:%d", ret);
+		goto error;
+	}
+
 	LOG_INF("Waiting for network");
 
 	/* wait for +CREG: 1 notification (20 seconds max) */
@@ -1126,8 +1146,8 @@ static int modem_init(struct device *dev)
     // set DNS
 
     // TODO
-    //modem_reset();
-	net_if_up(ictx.iface);
+    modem_reset();
+	//net_if_up(ictx.iface);
 
 error:
 	return ret;
