@@ -526,7 +526,6 @@ static void on_cmd_sockwrote(struct net_buf **buf, u16_t len)
 	sock = &ictx.sockets[ictx.last_socket_id];
     k_sem_give(&sock->sem_write_ready);
 	k_sem_give(&ictx.sem_response);
-	LOG_INF("Wrote");
 }
 
 /* Handler: ERROR */
@@ -540,34 +539,6 @@ static void on_cmd_sockexterror(struct net_buf **buf, u16_t len)
 	ictx.last_error = -atoi(value);
 	LOG_ERR("+CME %d", ictx.last_error);
 	k_sem_give(&ictx.sem_response);
-}
-
-/* Handler: +QISEND: <socket_id>,<length> */
-static void on_cmd_sockwrite(struct net_buf **buf, u16_t len)
-{
-	char value[2];
-
-	/* TODO: check length against original send length */
-
-	if (!*buf) {
-		return;
-	}
-
-	/* make sure only a single digit is picked up for socket_id */
-	value[0] = net_buf_pull_u8(*buf);
-	value[1] = 0;
-
-	ictx.last_socket_id = atoi(value);
-	if (ictx.last_socket_id < MDM_BASE_SOCKET_NUM) {
-		return;
-	}
-
-	/* don't give back semaphore -- OK to follow */
-}
-
-/* Handler: +QIRD: <length>\r\n<data> */
-static void on_cmd_sockread(struct net_buf **buf, u16_t len)
-{
 }
 
 /* Handler: +QICLOSE: <socket_id> */
@@ -590,21 +561,20 @@ static void on_cmd_socknotifyclose(struct net_buf **buf, u16_t len)
     clean_socket(id);
 }
 
-/* Handler: +QIURC: "recv",<socket_id> */
 static void on_cmd_socknotifydata(struct net_buf **buf, u16_t len)
 {
-	char value[2];
+    char value[2];
     struct ec20_socket *sock = NULL;
-	int id;
+    int id;
 
-	/* make sure only a single digit is picked up for socket_id */
-	value[0] = net_buf_pull_u8(*buf);
-	len--;
-	value[1] = 0;
+    /* make sure only a single digit is picked up for socket_id */
+    value[0] = net_buf_pull_u8(*buf);
+    len--;
+    value[1] = 0;
 
-	id = atoi(value);
+    id = atoi(value);
+    ictx.last_socket_id = id;
     sock = &ictx.sockets[id];
-    //k_sem_give(&ictx.sem_response);
     k_sem_give(&sock->sem_read_ready);
 }
 
@@ -648,48 +618,59 @@ static void on_cmd_read_ready(struct net_buf **buf, u16_t len)
 {
 	struct ec20_socket *sock;
 	char buffer[10];
-	u16_t bytes_read, i;
+	u16_t bytes_read, i = 0;
     size_t out_len;
 	u8_t id, c = 0U;
 
-	if (ictx.last_socket_id < MDM_BASE_SOCKET_NUM) {
-        // AT+QIRD=<socket_id>
-        net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
-        id = atoi(strtok(buffer, ","));
-    } else {
-        // +QIRD: <bytes_read><CR><LF>
-        id = ictx.last_socket_id;
-    }
+    id = ictx.last_socket_id;
 
 	sock = &ictx.sockets[id];
-    LOG_WRN("on read ready %d reading %d", id, sock->is_in_reading);
-    char test[1280];
-	if (sock->is_in_reading) {
-        out_len = net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
-		bytes_read = atoi(buffer);
-		LOG_DBG("Reported %d bytes to be read. len: %d", bytes_read, len);
-        // skip new line
-        for (i = 0; i < out_len; i++) {
-            net_buf_pull_u8(*buf);
-        }
-
-        for (i = 0; i < bytes_read; i++) {
-            c = net_buf_pull_u8(*buf);
-            test[i] = c;
-        }
-        test[i] = 0;
-
-        printf("Read resp %s\n", test);
-
-		sock->bytes_read = bytes_read;
-		sock->is_in_reading = false;
-	} else {
-		sock->data_ready = true;
-		if (sock->is_polled) {
-			k_sem_give(&ictx.sem_poll);
-		}
-	}
 	k_sem_give(&sock->sem_read_ready);
+
+    out_len = net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
+    buffer[out_len] = 0;
+    bytes_read = atoi(buffer);
+    LOG_DBG("Reported %d bytes to be read. len: %d %s", bytes_read, len, log_strdup(buffer));
+
+    while (i < len) {
+        i++;
+        net_buf_pull_u8(*buf);
+    }
+
+    i = 0;
+    while (i < bytes_read) {
+        if (!(*buf)->len) {
+			*buf = net_buf_frag_del(NULL, *buf);
+		}
+
+        modem_read_rx(buf);
+        if (*buf) {
+            out_len = (*buf)->len;
+            while (out_len) {
+                out_len--;
+                c = net_buf_pull_u8(*buf);
+                sock->p_recv_addr[i] = c;
+                i++; 
+            }
+        }
+        k_yield();
+    }
+     sock->p_recv_addr[bytes_read] = 0;
+
+    /*
+    while(i < bytes_read) {
+        c = net_buf_pull_u8(*buf);
+        sock->p_recv_addr[i] = c;
+        if (!(*buf)->len) {
+            *buf = net_buf_frag_del(NULL, *buf);
+        }
+    }
+    sock->p_recv_addr[i] = 0;
+
+    */
+    sock->bytes_read = bytes_read;
+    sock->is_in_reading = false;
+	//k_sem_give(&sock->sem_read_ready);
 }
 
 static void on_cmd_socket_error(struct net_buf **buf, u16_t len)
@@ -799,12 +780,13 @@ static void modem_rx(void)
 		/* UNSOLICITED RESPONSE CODES */
 		CMD_HANDLER("+QICLOSE: ", socknotifyclose),
 		CMD_HANDLER("+QIURC: \"closed\",", socknotifyclose),
-		CMD_HANDLER("SEND OK", sockwrote),
+		CMD_HANDLER("+QIURC: \"recv\",", socknotifydata),
 		CMD_HANDLER("+QIURC: \"dnsgip\",\"", getaddr),
+		CMD_HANDLER("SEND OK", sockwrote),
 
         /* SOCKET OPERATION RESPONSES */
 		CMD_HANDLER("+QIOPEN: ", write_ready),
-		CMD_HANDLER("+QIURC: \"recv\",", read_ready),
+		CMD_HANDLER("+QIRD: ", read_ready),
 		CMD_HANDLER("AT+QISEND=", socksend),
 		CMD_HANDLER("+QIURC \"error\",", socket_error),
 	};
@@ -828,6 +810,7 @@ static void modem_rx(void)
 				break;
 			}
 
+            /*
             if (len != offset) {
                 swap_buf = net_buf_clone(rx_buf, 10);
                 rx_buf = net_buf_frag_del(NULL, rx_buf);
@@ -836,17 +819,17 @@ static void modem_rx(void)
                 net_buf_unref(rx_buf);
                 rx_buf = swap_buf;
             }
+            */
 
             memcpy(rx_tmp, rx_buf->data, rx_buf->len);
             rx_tmp[rx_buf->len] = 0;
             if (rx_buf->len > 40) {
-                LOG_DBG("<-- %s (len:%u)", log_strdup(rx_tmp + 20), rx_buf->len);
+                LOG_DBG("<-- (len:%d) %s", rx_buf->len, log_strdup(rx_tmp + 20));
             } else {
-                LOG_DBG("<-- %s (len:%u)", log_strdup(rx_tmp), rx_buf->len);
+                LOG_DBG("<-- (len:%d) %s", rx_buf->len, log_strdup(rx_tmp));
             }
 
 			/* look for matching data handlers */
-			i = -1;
 			for (i = 0; i < ARRAY_SIZE(handlers); i++) {
 				if (net_buf_ncmp(rx_buf, handlers[i].cmd,
 						 handlers[i].cmd_len) == 0) {
@@ -1055,7 +1038,8 @@ restart:
 
 	/* wait for +CREG: 1 notification (20 seconds max) */
 	counter = 0;
-	while (counter++ < 20 && ictx.ev_creg != 1) {
+    // TODO change counter back to 20
+	while (counter++ < 10 && ictx.ev_creg != 1) {
 		k_sleep(K_SECONDS(1));
 	}
 
@@ -1165,7 +1149,9 @@ static int modem_init(struct device *dev)
     // TODO
     // set DNS
 
-    modem_reset();
+    // TODO
+    //modem_reset();
+	net_if_up(ictx.iface);
 
 error:
 	return ret;
@@ -1332,15 +1318,12 @@ static ssize_t ec20_recv(int id, void *buf, size_t max_len, int flags) {
 	}
 
     if (!sock->in_use) {
-        LOG_WRN("ec20_recv no context");
         return 0;
     }
 
-    LOG_WRN("ec20_recv 1");
 	if (!sock->data_ready) {
-		k_sem_take(&sock->sem_read_ready, K_FOREVER);
+		k_sem_take(&sock->sem_read_ready, MDM_CMD_READ_TIMEOUT);
 	}
-    LOG_WRN("ec20_recv 2");
 	//sock->data_ready = false;
 	k_sem_reset(&sock->sem_read_ready);
 	k_sem_reset(&ictx.sem_response);
@@ -1349,17 +1332,14 @@ static ssize_t ec20_recv(int id, void *buf, size_t max_len, int flags) {
 	sock->recv_max_len = max_len;
     ictx.last_socket_id = id;
 	snprintf(buffer_send, sizeof(buffer_send), "AT+QIRD=%d", id);
-    LOG_WRN("ec20_recv 2-0");
 	ret = send_at_cmd(buffer_send, &sock->sem_read_ready, MDM_CMD_READ_TIMEOUT);
-    LOG_WRN("ec20_recv 2-1");
 	if (ret < 0) {
 		LOG_ERR("Read request failed.");
 		goto error;
 	}
+
 	k_sem_take(&ictx.sem_response, MDM_CMD_READ_TIMEOUT);
 
-    LOG_WRN("ec20_recv 3");
-	LOG_DBG("Socket read %d bytes.", sock->bytes_read);
 	return sock->bytes_read;
 error:
 	if (ret == -ETIMEDOUT) {
@@ -1417,7 +1397,7 @@ static int ec20_getaddrinfo(const char *node, const char *service,
 	int socktype = SOCK_STREAM, proto = IPPROTO_TCP;
 	struct addrinfo *ai;
 	struct sockaddr *ai_addr;
-	int16_t ret; 
+	int16_t ret = 0; 
 	uint32_t ipaddr[4];
 	char buf[128];
 
