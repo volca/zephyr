@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Zephyr Sanity Tests
 
+Also check the "User and Developer Guides" at https://docs.zephyrproject.org/
+
 This script scans for the set of unit test applications in the git
 repository and attempts to execute them. By default, it tries to
 build each test case on one platform per architecture, using a precedence
@@ -42,8 +44,8 @@ pairs:
     when building or running the test case.
 
   build_only: <True|False> (default False)
-    If true, don't try to run the test under QEMU even if the
-    selected platform supports it.
+    If true, don't try to run the test even if the selected platform
+    supports it.
 
   build_on_all: <True|False> (default False)
     If true, attempt to build test on all available platforms.
@@ -1117,7 +1119,7 @@ class MakeGenerator:
     MAKE_RULE_TMPL_CMAKE = """\t@echo sanity_test_{phase} {goal} >&2
 \tcmake  \\
 \t\t-G"{generator}"\\
-\t\t-H{directory}\\
+\t\t-S{directory}\\
 \t\t-B{outdir}\\
 \t\t-DEXTRA_CFLAGS="-Werror {cflags}"\\
 \t\t-DEXTRA_AFLAGS=-Wa,--fatal-warnings\\
@@ -1332,7 +1334,8 @@ class MakeGenerator:
 
         if len(ti.test.extra_configs) > 0 or options.coverage:
             args.append("OVERLAY_CONFIG=\"%s %s\"" %(overlays,
-                        os.path.join(ti.outdir, "overlay.conf")))
+                        os.path.join(ti.outdir,
+                                     "sanitycheck", "testcase_extra.conf")))
 
         if ti.test.type == "unit" and options.enable_coverage:
             args.append("COVERAGE=1")
@@ -1883,8 +1886,13 @@ class TestInstance:
         return build_only
 
     def create_overlay(self, platform):
-        file = os.path.join(self.outdir, "overlay.conf")
-        os.makedirs(self.outdir, exist_ok=True)
+        # Create this in a "sanitycheck/" subdirectory otherwise this
+        # will pass this overlay to kconfig.py *twice* and kconfig.cmake
+        # will silently give that second time precedence over any
+        # --extra-args=CONFIG_*
+        subdir = os.path.join(self.outdir, "sanitycheck")
+        os.makedirs(subdir, exist_ok=True)
+        file = os.path.join(subdir, "testcase_extra.conf")
         with open(file, "w") as f:
             content = ""
 
@@ -2723,8 +2731,8 @@ def parse_arguments():
                                             """
 Artificially long but functional example:
     $ ./scripts/sanitycheck -v     \\
-      --testcase-root tests/     \\
-      --testcase-root mytests/   \\
+      --testcase-root tests/ztest/base    \\
+      --testcase-root tests/kernel   \\
       --test      tests/ztest/base/testing.ztest.verbose_0  \\
       --test      tests/kernel/fifo/fifo_api/kernel.fifo.poll
 
@@ -2776,7 +2784,7 @@ Artificially long but functional example:
     test_xor_subtest.add_argument(
         "-s", "--test", action="append",
         help="Run only the specified test cases. These are named by "
-        "path/relative/to/Zephyr/base/section.name.in.testcase.yaml>")
+        "<path/relative/to/Zephyr/base/section.name.in.testcase.yaml>")
 
     test_xor_subtest.add_argument(
         "--sub-test", action="append",
@@ -2794,7 +2802,9 @@ Artificially long but functional example:
 
     parser.add_argument(
         "-o", "--testcase-report",
-        help="Output a CSV spreadsheet containing results of the test run")
+        help="""Output a CSV spreadsheet containing results of the test run.
+        The handler_time column is left blank for tests that were only
+        compiled and not run.""")
     parser.add_argument(
         "-d", "--discard-report",
         help="Output a CSV spreadsheet showing tests that were skipped "
@@ -2844,7 +2854,11 @@ Artificially long but functional example:
     parser.add_argument("--detailed-report",
             action="store",
             metavar="FILENAME",
-            help="Generate a junit report with detailed testcase results.")
+            help="""Generate a junit report with detailed testcase results.
+            Unlike the CSV file produced by --testcase-report, this XML
+            report includes only tests which have run and none which were
+            merely built. If an image with multiple tests crashes early then
+            later tests are not accounted for either.""")
 
     parser.add_argument("--timestamps",
             action="store_true",
@@ -3014,17 +3028,9 @@ Artificially long but functional example:
         """
     )
 
-    if "ZEPHYR_SDK_INSTALL_DIR" in os.environ:
-        # Use the x86 build of GCOV from the SDK. This can parse gcov data
-        # from any arch built with the same GCC version.
-        gcov_bin = os.path.join(os.environ["ZEPHYR_SDK_INSTALL_DIR"],
-                "i586-zephyr-elf/bin/i586-zephyr-elf-gcov")
-    else:
-        # No SDK in use, just rely on PATH to find it
-        gcov_bin = "gcov"
-
-    parser.add_argument("--gcov-tool", default=gcov_bin,
-                        help="Path to the gcov tool. Default is %s" % gcov_bin)
+    parser.add_argument("--gcov-tool", default=None,
+                        help="Path to the gcov tool to use for code coverage "
+                        "reports")
 
     parser.add_argument("--enable-coverage", action="store_true",
                         help="Enable code coverage using gcov.")
@@ -3532,6 +3538,20 @@ def main():
             failed += 1
 
     if options.coverage:
+        if options.gcov_tool == None:
+            using_posix = False
+
+            for plat in options.coverage_platform:
+                ts_plat = ts.get_platform(plat)
+                if ts_plat and ts_plat.type == "native":
+                    using_posix = True
+
+            if using_posix or "ZEPHYR_SDK_INSTALL_DIR" not in os.environ:
+                options.gcov_tool = "gcov"
+            else:
+                options.gcov_tool = os.path.join(os.environ["ZEPHYR_SDK_INSTALL_DIR"],
+                    "i586-zephyr-elf/bin/i586-zephyr-elf-gcov")
+
         info("Generating coverage files...")
         generate_coverage(options.outdir, ["*generated*", "tests/*", "samples/*"])
 

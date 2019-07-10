@@ -56,7 +56,8 @@ struct net_if_addr {
 
 #if defined(CONFIG_NET_IPV6_DAD)
 	/** Duplicate address detection (DAD) timer */
-	struct k_delayed_work dad_timer;
+	sys_snode_t dad_node;
+	u32_t dad_start;
 #endif
 	/** How the IP address was set */
 	enum net_addr_type addr_type;
@@ -132,14 +133,20 @@ struct net_if_ipv6_prefix {
  * Stores the router information.
  */
 struct net_if_router {
-	/** Router lifetime */
-	struct k_delayed_work lifetime;
+	/** Slist lifetime timer node */
+	sys_snode_t node;
 
 	/** IP address */
 	struct net_addr address;
 
 	/** Network interface the router is connected to */
 	struct net_if *iface;
+
+	/** Router life timer start */
+	u32_t life_start;
+
+	/** Router lifetime */
+	u16_t lifetime;
 
 	/** Is this router used or not */
 	u8_t is_used : 1;
@@ -219,9 +226,6 @@ struct net_if_ipv6 {
 	/** Prefixes */
 	struct net_if_ipv6_prefix prefix[NET_IF_MAX_IPV6_PREFIX];
 
-	/** Router solicitation timer */
-	struct k_delayed_work rs_timer;
-
 	/** Default reachable time (RFC 4861, page 52) */
 	u32_t base_reachable_time;
 
@@ -230,17 +234,19 @@ struct net_if_ipv6 {
 
 	/** Retransmit timer (RFC 4861, page 52) */
 	u32_t retrans_timer;
+#if defined(CONFIG_NET_IPV6_ND)
+	/** Router solicitation timer node */
+	sys_snode_t rs_node;
 
-	/** IPv6 hop limit */
-	u8_t hop_limit;
-
-#if defined(CONFIG_NET_IPV6_DAD)
-	/** IPv6 current duplicate address detection count */
-	u8_t dad_count;
-#endif /* CONFIG_NET_IPV6_DAD */
+	/* RS start time */
+	u32_t rs_start;
 
 	/** RS count */
 	u8_t rs_count;
+#endif
+
+	/** IPv6 hop limit */
+	u8_t hop_limit;
 };
 
 /** @cond INTERNAL_HIDDEN */
@@ -650,7 +656,10 @@ static inline struct net_if_config *net_if_get_config(struct net_if *iface)
 #if defined(CONFIG_NET_IPV6_DAD)
 void net_if_start_dad(struct net_if *iface);
 #else
-#define net_if_start_dad(iface)
+static inline void net_if_start_dad(struct net_if *iface)
+{
+	ARG_UNUSED(iface);
+}
 #endif
 
 /**
@@ -659,6 +668,21 @@ void net_if_start_dad(struct net_if *iface);
  * @param iface Pointer to a network interface structure
  */
 void net_if_start_rs(struct net_if *iface);
+
+
+/**
+ * @brief Stop neighbor discovery.
+ *
+ * @param iface Pointer to a network interface structure
+ */
+#if defined(CONFIG_NET_IPV6_ND)
+void net_if_stop_rs(struct net_if *iface);
+#else
+static inline void net_if_stop_rs(struct net_if *iface)
+{
+	ARG_UNUSED(iface);
+}
+#endif /* CONFIG_NET_IPV6_ND */
 
 /**
  * @brief Set a network interface's link address
@@ -1137,6 +1161,28 @@ void net_if_ipv6_prefix_unset_timer(struct net_if_ipv6_prefix *prefix);
 bool net_if_ipv6_addr_onlink(struct net_if **iface, struct in6_addr *addr);
 
 /**
+ * @brief Get the IPv6 address of the given router
+ * @param router a network router
+ *
+ * @return pointer to the IPv6 address, or NULL if none
+ */
+#if defined(CONFIG_NET_IPV6)
+static inline struct in6_addr *net_if_router_ipv6(struct net_if_router *router)
+{
+	return &router->address.in6_addr;
+}
+#else
+static inline struct in6_addr *net_if_router_ipv6(struct net_if_router *router)
+{
+	static struct in6_addr addr;
+
+	ARG_UNUSED(router);
+
+	return &addr;
+}
+#endif
+
+/**
  * @brief Check if IPv6 address is one of the routers configured
  * in the system.
  *
@@ -1167,7 +1213,7 @@ struct net_if_router *net_if_ipv6_router_find_default(struct net_if *iface,
  * @param lifetime Lifetime of this router.
  */
 void net_if_ipv6_router_update_lifetime(struct net_if_router *router,
-					u32_t lifetime);
+					u16_t lifetime);
 
 /**
  * @brief Add IPv6 router to the system.
@@ -1549,6 +1595,28 @@ struct net_if_mcast_addr *net_if_ipv4_maddr_lookup(const struct in_addr *addr,
 						   struct net_if **iface);
 
 /**
+ * @brief Get the IPv4 address of the given router
+ * @param router a network router
+ *
+ * @return pointer to the IPv4 address, or NULL if none
+ */
+#if defined(CONFIG_NET_IPV4)
+static inline struct in_addr *net_if_router_ipv4(struct net_if_router *router)
+{
+	return &router->address.in_addr;
+}
+#else
+static inline struct in_addr *net_if_router_ipv4(struct net_if_router *router)
+{
+	static struct in_addr addr;
+
+	ARG_UNUSED(router);
+
+	return &addr;
+}
+#endif
+
+/**
  * @brief Check if IPv4 address is one of the routers configured
  * in the system.
  *
@@ -1560,6 +1628,17 @@ struct net_if_mcast_addr *net_if_ipv4_maddr_lookup(const struct in_addr *addr,
 struct net_if_router *net_if_ipv4_router_lookup(struct net_if *iface,
 						struct in_addr *addr);
 
+/**
+ * @brief Find default router for this IPv4 address.
+ *
+ * @param iface Network interface. This can be NULL in which case we
+ * go through all the network interfaces to find a suitable router.
+ * @param addr IPv4 address
+ *
+ * @return Pointer to router information, NULL if cannot be found
+ */
+struct net_if_router *net_if_ipv4_router_find_default(struct net_if *iface,
+						      struct in_addr *addr);
 /**
  * @brief Add IPv4 router to the system.
  *
@@ -1574,6 +1653,15 @@ struct net_if_router *net_if_ipv4_router_add(struct net_if *iface,
 					     struct in_addr *addr,
 					     bool is_default,
 					     u16_t router_lifetime);
+
+/**
+ * @brief Remove IPv4 router from the system.
+ *
+ * @param router Router information.
+ *
+ * @return True if successfully removed, false otherwise
+ */
+bool net_if_ipv4_router_rm(struct net_if_router *router);
 
 /**
  * @brief Check if the given IPv4 address belongs to local subnet.
