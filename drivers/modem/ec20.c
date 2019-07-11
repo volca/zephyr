@@ -1078,6 +1078,13 @@ restart:
     if (ret < 0) {
 		LOG_ERR("AT+QIACT=1 ret:%d", ret);
 	}
+
+    // TODO
+    ret = send_at_cmd("AT+QIDNSCFG=1,\"119.29.29.29\",\"8.8.8.8\"", &ictx.sem_response, MDM_CMD_TIMEOUT);
+    if (ret < 0) {
+		LOG_ERR("AT+QIDNSCFG ret:%d", ret);
+	}
+
     k_sleep(K_SECONDS(1));
 
 	LOG_INF("Network is ready.");
