@@ -636,7 +636,9 @@ static void on_cmd_read_ready(struct net_buf **buf, u16_t len)
     }
 
     i = 0;
-    while (i < bytes_read) {
+	/* skip CR/LF */
+    size_t bytes_skip = 0;
+    while (i < bytes_read + 2) {
         if (!(*buf)->len) {
 			*buf = net_buf_frag_del(NULL, *buf);
 		}
@@ -647,13 +649,18 @@ static void on_cmd_read_ready(struct net_buf **buf, u16_t len)
             while (out_len) {
                 out_len--;
                 c = net_buf_pull_u8(*buf);
-                sock->p_recv_addr[i] = c;
-                i++; 
+                if (bytes_skip < 2) {
+                    bytes_skip++;
+                    continue;
+                } else {
+                    sock->p_recv_addr[i] = c;
+                }
+                i++;
             }
         }
         k_yield();
     }
-     sock->p_recv_addr[bytes_read] = 0;
+    sock->p_recv_addr[bytes_read] = 0;
 
     sock->bytes_read = bytes_read;
     sock->is_in_reading = false;
