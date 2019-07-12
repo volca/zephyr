@@ -818,6 +818,7 @@ static void modem_rx(void)
 				break;
 			}
 
+            /*
             memcpy(rx_tmp, rx_buf->data, rx_buf->len);
             rx_tmp[rx_buf->len] = 0;
             if (rx_buf->len > 40) {
@@ -825,6 +826,7 @@ static void modem_rx(void)
             } else {
                 LOG_DBG("<-- (len:%d) %s", rx_buf->len, log_strdup(rx_tmp));
             }
+            */
 
 			/* look for matching data handlers */
 			for (i = 0; i < ARRAY_SIZE(handlers); i++) {
@@ -1155,9 +1157,6 @@ static int modem_init(struct device *dev)
 
 	/* init RSSI query */
 	k_delayed_work_init(&ictx.rssi_query_work, modem_rssi_query_work);
-
-    // TODO
-    // set DNS
 
     // TODO
     modem_reset();
