@@ -20,17 +20,11 @@ properties:
     reg:
       category: required
 
-    interrupts:
-      category: required
-
     label:
       category: required
 
     clocks:
-      type: array
       category: required
-      description: Clock gate control information
-      generation: define
 
 "#cells":
   - pin

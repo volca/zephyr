@@ -23,7 +23,6 @@ properties:
     bits:
       type: int
       description: gpio bits
-      generation: define
       category: required
 
     interrupts:
@@ -31,8 +30,6 @@ properties:
 
     label:
       category: required
-
-cell_string: GPIO
 
 "#cells":
   - pin

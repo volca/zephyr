@@ -22,9 +22,3 @@ properties:
 
     interrupts:
       category: required
-
-    clocks:
-      type: array
-      category: required
-      description: Clock gate information
-      generation: define

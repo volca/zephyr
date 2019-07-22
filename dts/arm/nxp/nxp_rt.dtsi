@@ -29,6 +29,12 @@
 		};
 	};
 
+	sysclk: system-clock {
+		compatible = "fixed-clock";
+		clock-frequency = <600000000>;
+		#clock-cells = <0>;
+	};
+
 	soc {
 		flexram0: flexram@400b0000 {
 			compatible = "nxp,imx-flexram";
@@ -354,6 +360,7 @@
 			reg = <0x402E0000 0x200>;
 			interrupts = <113 1>;
 			interrupt-names = "usb_otg";
+			clocks = <&sysclk>;
 			num-bidir-endpoints = <8>;
 			maximum-speed = "full-speed";
 			status = "disabled";
@@ -369,6 +376,24 @@
 			maximum-speed = "full-speed";
 			status = "disabled";
 			label = "USBD_2";
+		};
+
+		usdhc1: usdhc@402c0000 {
+			compatible = "nxp,imx-usdhc";
+			reg = <0x402c0000 0x4000>;
+			status = "disabled";
+			interrupts = <110 0>;
+			clocks = <&ccm IMX_CCM_USDHC1_CLK 0 0>;
+			label = "USDHC_1";
+		};
+
+		usdhc2: usdhc@402c4000 {
+			compatible = "nxp,imx-usdhc";
+			reg = <0x402c4000 0x4000>;
+			status = "disabled";
+			interrupts = <111 0>;
+			clocks = <&ccm IMX_CCM_USDHC2_CLK 0 0>;
+			label = "USDHC_2";
 		};
 	};
 };

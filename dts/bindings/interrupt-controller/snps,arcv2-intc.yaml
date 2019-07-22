@@ -17,15 +17,6 @@ properties:
     compatible:
       constraint: "snps,arcv2-intc"
 
-    reg:
-      category: required
-
-    arc,num-irq-priority-bits:
-      category: required
-      type: int
-      description: number of bits of IRQ priorities
-      generation: define
-
 "#cells":
   - irq
   - priority

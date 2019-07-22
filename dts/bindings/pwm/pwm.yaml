@@ -14,11 +14,5 @@ inherits:
     !include base.yaml
 
 properties:
-    clocks:
-      type: array
-      category: required
-      description: Clock gate information
-      generation: define
-
     label:
       category: required

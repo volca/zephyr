@@ -28,9 +28,8 @@ properties:
 
     rdc:
      type: int
-     category: required
+     category: optional
      description: Set the RDC permission for this peripheral
-     generation: define
 
 "#cells":
   - pin
