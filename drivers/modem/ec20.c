@@ -799,7 +799,6 @@ static void modem_rx(void)
 		CMD_HANDLER("+QIURC \"error\",", socket_error),
 	};
 
-    char rx_tmp[128];
 	while (true) {
 		/* wait for incoming data */
 		k_sem_take(&ictx.mdm_ctx.rx_sem, K_FOREVER);
@@ -817,16 +816,6 @@ static void modem_rx(void)
 			if (!frag) {
 				break;
 			}
-
-            /*
-            memcpy(rx_tmp, rx_buf->data, rx_buf->len);
-            rx_tmp[rx_buf->len] = 0;
-            if (rx_buf->len > 40) {
-                LOG_DBG("<-- (len:%d) %s", rx_buf->len, log_strdup(rx_tmp + 20));
-            } else {
-                LOG_DBG("<-- (len:%d) %s", rx_buf->len, log_strdup(rx_tmp));
-            }
-            */
 
 			/* look for matching data handlers */
 			for (i = 0; i < ARRAY_SIZE(handlers); i++) {
@@ -1159,8 +1148,8 @@ static int modem_init(struct device *dev)
 	k_delayed_work_init(&ictx.rssi_query_work, modem_rssi_query_work);
 
     // TODO
-    modem_reset();
-	//net_if_up(ictx.iface);
+    //modem_reset();
+	net_if_up(ictx.iface);
 
 error:
 	return ret;
