@@ -1148,7 +1148,7 @@ static int modem_init(struct device *dev)
 	k_delayed_work_init(&ictx.rssi_query_work, modem_rssi_query_work);
 
     // TODO
-    //modem_reset();
+    modem_reset();
 	net_if_up(ictx.iface);
 
 error:

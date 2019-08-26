@@ -5092,7 +5092,9 @@ static void mayfly_xtal_start(void *params)
 	err = clock_control_on(_radio.hf_clock, NULL);
 	LL_ASSERT(!err || (err == -EINPROGRESS));
 
-	DEBUG_RADIO_XTAL(1);
+	if(!err || (err == -EINPROGRESS)) {
+        DEBUG_RADIO_XTAL(1);
+    }
 }
 
 static void event_xtal(u32_t ticks_at_expire, u32_t remainder,
