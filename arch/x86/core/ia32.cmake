@@ -17,9 +17,9 @@ zephyr_library_sources(
   ia32/intstub.S
   ia32/irq_manage.c
   ia32/swap.S
-  ia32/sys_fatal_error_handler.c
   ia32/thread.c
   ia32/spec_ctrl.c
+  ia32/prep_c.c
   )
 
 zephyr_library_sources_ifdef(CONFIG_IRQ_OFFLOAD		ia32/irq_offload.c)

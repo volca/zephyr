@@ -5,13 +5,12 @@
 #
 
 title: RISC-V CPU INTC
-version: 0.1
 
 description: >
     This binding describes the RISC-V CPU Interrupt Controller
 
 inherits:
-    !include base.yaml
+    !include [interrupt-controller.yaml, base.yaml]
 
 properties:
   compatible:

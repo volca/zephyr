@@ -131,7 +131,7 @@ static bool is_rodata(const void *addr)
 	extern const char *_image_rodata_end[];
 	#define RO_START _image_rodata_start
 	#define RO_END _image_rodata_end
-#elif defined(CONFIG_NIOS2) || defined(CONFIG_RISCV32)
+#elif defined(CONFIG_NIOS2) || defined(CONFIG_RISCV)
 	extern const char *_image_rom_start[];
 	extern const char *_image_rom_end[];
 	#define RO_START _image_rom_start
@@ -392,6 +392,7 @@ void log_generic(struct log_msg_ids src_level, const char *fmt, va_list ap)
 		log_arg_t args[LOG_MAX_NARGS];
 		u32_t nargs = count_args(fmt);
 
+		__ASSERT_NO_MSG(nargs < LOG_MAX_NARGS);
 		for (int i = 0; i < nargs; i++) {
 			args[i] = va_arg(ap, log_arg_t);
 		}
@@ -432,19 +433,18 @@ void log_hexdump_sync(struct log_msg_ids src_level, const char *metadata,
 	}
 }
 
-static u32_t timestamp_get(void)
+static u32_t k_cycle_get_32_wrapper(void)
 {
-	if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC > 1000000) {
-		return k_uptime_get_32();
-	} else {
-		return k_cycle_get_32();
-	}
+	/*
+	 * The k_cycle_get_32() is a define which cannot be referenced
+	 * by timestamp_func. Instead, this wrapper is used.
+	 */
+	return k_cycle_get_32();
 }
 
 void log_core_init(void)
 {
-	u32_t freq = (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC > 1000000) ?
-			1000 : CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC;
+	u32_t freq;
 
 	if (!IS_ENABLED(CONFIG_LOG_IMMEDIATE)) {
 		log_msg_pool_init();
@@ -456,7 +456,14 @@ void log_core_init(void)
 	}
 
 	/* Set default timestamp. */
-	timestamp_func = timestamp_get;
+	if (sys_clock_hw_cycles_per_sec() > 1000000) {
+		timestamp_func = k_uptime_get_32;
+		freq = 1000;
+	} else {
+		timestamp_func = k_cycle_get_32_wrapper;
+		freq = sys_clock_hw_cycles_per_sec();
+	}
+
 	log_output_timestamp_freq_set(freq);
 
 	/*

@@ -184,6 +184,11 @@ do {                                                                    \
 #define FUNC_CODE() .thumb;
 #define FUNC_INSTR(a)
 
+#elif defined(CONFIG_ISA_ARM)
+
+#define FUNC_CODE() .code 32
+#define FUNC_INSTR(a)
+
 #else
 
 #error unknown instruction set
@@ -208,7 +213,7 @@ do {                                                                    \
 
 #if defined(_ASMLANGUAGE) && !defined(_LINKER)
 
-#if defined(CONFIG_ARM) || defined(CONFIG_NIOS2) || defined(CONFIG_RISCV32) \
+#if defined(CONFIG_ARM) || defined(CONFIG_NIOS2) || defined(CONFIG_RISCV) \
 	|| defined(CONFIG_XTENSA)
 #define GTEXT(sym) .global sym; .type sym, %function
 #define GDATA(sym) .global sym; .type sym, %object
@@ -354,7 +359,7 @@ do {                                                                    \
 		",%0"                               \
 		"\n\t.type\t" #name ",@object" :  : "n"(value))
 
-#elif defined(CONFIG_NIOS2) || defined(CONFIG_RISCV32) || defined(CONFIG_XTENSA)
+#elif defined(CONFIG_NIOS2) || defined(CONFIG_RISCV) || defined(CONFIG_XTENSA)
 
 /* No special prefixes necessary for constants in this arch AFAICT */
 #define GEN_ABSOLUTE_SYM(name, value)		\

@@ -1005,33 +1005,9 @@ static int start_security(struct bt_conn *conn)
 #if defined(CONFIG_BT_CENTRAL) && defined(CONFIG_BT_SMP)
 	case BT_HCI_ROLE_MASTER:
 	{
-		if (!conn->le.keys) {
-			conn->le.keys = bt_keys_find(BT_KEYS_LTK_P256,
-						     conn->id, &conn->le.dst);
-			if (!conn->le.keys) {
-				conn->le.keys = bt_keys_find(BT_KEYS_LTK,
-							     conn->id,
-							     &conn->le.dst);
-			}
-		}
-
-		if (!conn->le.keys ||
-		    !(conn->le.keys->keys & (BT_KEYS_LTK | BT_KEYS_LTK_P256))) {
+		if (!bt_smp_keys_check(conn)) {
 			return bt_smp_send_pairing_req(conn);
 		}
-
-		if (conn->required_sec_level > BT_SECURITY_MEDIUM &&
-		    !(conn->le.keys->flags & BT_KEYS_AUTHENTICATED)) {
-			return bt_smp_send_pairing_req(conn);
-		}
-
-		if (conn->required_sec_level > BT_SECURITY_HIGH &&
-		    !(conn->le.keys->flags & BT_KEYS_AUTHENTICATED) &&
-		    !(conn->le.keys->keys & BT_KEYS_LTK_P256) &&
-		    !(conn->le.keys->enc_size == BT_SMP_MAX_ENC_KEY_SIZE)) {
-			return bt_smp_send_pairing_req(conn);
-		}
-
 		/* LE SC LTK and legacy master LTK are stored in same place */
 		return bt_conn_le_start_encryption(conn,
 						   conn->le.keys->ltk.rand,
@@ -1202,6 +1178,19 @@ int bt_conn_send_cb(struct bt_conn *conn, struct net_buf *buf,
 	return 0;
 }
 
+static bool conn_tx_internal(bt_conn_tx_cb_t cb)
+{
+	if (cb == att_pdu_sent || cb == att_cfm_sent || cb == att_rsp_sent ||
+#if defined(CONFIG_BT_L2CAP_DYNAMIC_CHANNEL)
+	    cb == l2cap_chan_sdu_sent ||
+#endif /* CONFIG_BT_L2CAP_DYNAMIC_CHANNEL */
+	    cb == att_req_sent) {
+		return true;
+	}
+
+	return false;
+}
+
 void bt_conn_notify_tx(struct bt_conn *conn)
 {
 	struct bt_conn_tx *tx;
@@ -1213,7 +1202,12 @@ void bt_conn_notify_tx(struct bt_conn *conn)
 
 		/* Only submit if there is a callback set */
 		if (tx->data.cb) {
-			k_work_submit(&tx->work);
+			/* Submit using RX thread if internal callback */
+			if (conn_tx_internal(tx->data.cb)) {
+				tx_notify_cb(&tx->work);
+			} else {
+				k_work_submit(&tx->work);
+			}
 		} else {
 			tx_free(tx);
 		}
@@ -1244,7 +1238,16 @@ static struct bt_conn_tx *add_pending_tx(struct bt_conn *conn,
 
 	BT_DBG("conn %p cb %p user_data %p", conn, cb, user_data);
 
-	tx = k_fifo_get(&free_tx, K_FOREVER);
+	if (IS_ENABLED(CONFIG_BT_DEBUG_CONN)) {
+		tx = k_fifo_get(&free_tx, K_NO_WAIT);
+		if (!tx) {
+			BT_WARN("Unable to get a free conn_tx, yielding...");
+			tx = k_fifo_get(&free_tx, K_FOREVER);
+		}
+	} else {
+		tx = k_fifo_get(&free_tx, K_FOREVER);
+	}
+
 	tx->conn = bt_conn_ref(conn);
 	k_work_init(&tx->work, tx_notify_cb);
 	tx->data.cb = cb;
@@ -1802,12 +1805,14 @@ int bt_conn_get_info(const struct bt_conn *conn, struct bt_conn_info *info)
 
 	switch (conn->type) {
 	case BT_CONN_TYPE_LE:
+		info->le.dst = &conn->le.dst;
+		info->le.src = &bt_dev.id_addr[conn->id];
 		if (conn->role == BT_HCI_ROLE_MASTER) {
-			info->le.src = &conn->le.init_addr;
-			info->le.dst = &conn->le.resp_addr;
+			info->le.local = &conn->le.init_addr;
+			info->le.remote = &conn->le.resp_addr;
 		} else {
-			info->le.src = &conn->le.resp_addr;
-			info->le.dst = &conn->le.init_addr;
+			info->le.local = &conn->le.resp_addr;
+			info->le.remote = &conn->le.init_addr;
 		}
 		info->le.interval = conn->le.interval;
 		info->le.latency = conn->le.latency;
@@ -1893,10 +1898,12 @@ int bt_conn_disconnect(struct bt_conn *conn, u8_t reason)
 	 * and we could send LE Create Connection as soon as the remote
 	 * starts advertising.
 	 */
+#if !defined(CONFIG_BT_WHITELIST)
 	if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
 	    conn->type == BT_CONN_TYPE_LE) {
 		bt_le_set_auto_conn(&conn->le.dst, NULL);
 	}
+#endif /* !defined(CONFIG_BT_WHITELIST) */
 
 	switch (conn->state) {
 	case BT_CONN_CONNECT_SCAN:
@@ -1944,15 +1951,159 @@ int bt_conn_disconnect(struct bt_conn *conn, u8_t reason)
 static void bt_conn_set_param_le(struct bt_conn *conn,
 				 const struct bt_le_conn_param *param)
 {
+	conn->le.interval_min = param->interval_min;
 	conn->le.interval_max = param->interval_max;
 	conn->le.latency = param->latency;
 	conn->le.timeout = param->timeout;
 }
 
+#if defined(CONFIG_BT_WHITELIST)
+int bt_le_whitelist_add(const bt_addr_le_t *addr)
+{
+	struct bt_hci_cp_le_add_dev_to_wl *cp;
+	struct net_buf *buf;
+	int err;
+
+	if (!(bt_dev.le.wl_entries < bt_dev.le.wl_size)) {
+		return -ENOMEM;
+	}
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_ADD_DEV_TO_WL, sizeof(*cp));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	bt_addr_le_copy(&cp->addr, addr);
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_ADD_DEV_TO_WL, buf, NULL);
+	if (err) {
+		BT_ERR("Failed to add device to whitelist");
+
+		return err;
+	}
+
+	bt_dev.le.wl_entries++;
+
+	return 0;
+}
+
+int bt_le_whitelist_rem(const bt_addr_le_t *addr)
+{
+	struct bt_hci_cp_le_rem_dev_from_wl *cp;
+	struct net_buf *buf;
+	int err;
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_REM_DEV_FROM_WL, sizeof(*cp));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	bt_addr_le_copy(&cp->addr, addr);
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_REM_DEV_FROM_WL, buf, NULL);
+	if (err) {
+		BT_ERR("Failed to remove device from whitelist");
+		return err;
+	}
+
+	bt_dev.le.wl_entries--;
+	return 0;
+}
+
+int bt_le_whitelist_clear(void)
+{
+	int err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_CLEAR_WL, NULL, NULL);
+
+	if (err) {
+		BT_ERR("Failed to clear whitelist");
+		return err;
+	}
+
+	bt_dev.le.wl_entries = 0;
+	return 0;
+}
+
+int bt_conn_create_auto_le(const struct bt_le_conn_param *param)
+{
+	struct bt_conn *conn;
+	int err;
+
+	if (!atomic_test_bit(bt_dev.flags, BT_DEV_READY)) {
+		return -EINVAL;
+	}
+
+	if (!bt_le_conn_params_valid(param)) {
+		return -EINVAL;
+	}
+
+	if (atomic_test_bit(bt_dev.flags, BT_DEV_EXPLICIT_SCAN)) {
+		return -EINVAL;
+	}
+
+	if (atomic_test_bit(bt_dev.flags, BT_DEV_AUTO_CONN)) {
+		return -EALREADY;
+	}
+
+	if (!bt_dev.le.wl_entries) {
+		return -EINVAL;
+	}
+
+	/* Don't start initiator if we have general discovery procedure. */
+	conn = bt_conn_lookup_state_le(NULL, BT_CONN_CONNECT_SCAN);
+	if (conn) {
+		bt_conn_unref(conn);
+		return -EINVAL;
+	}
+
+	/* Don't start initiator if we have direct discovery procedure. */
+	conn = bt_conn_lookup_state_le(NULL, BT_CONN_CONNECT);
+	if (conn) {
+		bt_conn_unref(conn);
+		return -EINVAL;
+	}
+
+	err = bt_le_auto_conn(param);
+	if (err) {
+		BT_ERR("Failed to start whitelist scan");
+		return err;
+	}
+
+	atomic_set_bit(bt_dev.flags, BT_DEV_AUTO_CONN);
+
+	return 0;
+}
+
+int bt_conn_create_auto_stop(void)
+{
+	if (!atomic_test_bit(bt_dev.flags, BT_DEV_READY)) {
+		return -EINVAL;
+	}
+
+	if (!atomic_test_bit(bt_dev.flags, BT_DEV_AUTO_CONN)) {
+		return -EINVAL;
+	}
+
+	int err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_CREATE_CONN_CANCEL, NULL,
+				       NULL);
+
+	atomic_clear_bit(bt_dev.flags, BT_DEV_AUTO_CONN);
+
+	if (err) {
+		BT_ERR("Failed to stop initiator");
+		return err;
+	}
+
+	return 0;
+}
+#endif /* defined(CONFIG_BT_WHITELIST) */
+
 struct bt_conn *bt_conn_create_le(const bt_addr_le_t *peer,
 				  const struct bt_le_conn_param *param)
 {
 	struct bt_conn *conn;
+	bt_addr_le_t dst;
 
 	if (!atomic_test_bit(bt_dev.flags, BT_DEV_READY)) {
 		return NULL;
@@ -1963,6 +2114,11 @@ struct bt_conn *bt_conn_create_le(const bt_addr_le_t *peer,
 	}
 
 	if (atomic_test_bit(bt_dev.flags, BT_DEV_EXPLICIT_SCAN)) {
+		return NULL;
+	}
+
+	if (IS_ENABLED(CONFIG_BT_WHITELIST) &&
+	    atomic_test_bit(bt_dev.flags, BT_DEV_AUTO_CONN)) {
 		return NULL;
 	}
 
@@ -1981,16 +2137,21 @@ struct bt_conn *bt_conn_create_le(const bt_addr_le_t *peer,
 		}
 	}
 
-	conn = bt_conn_add_le(peer);
+	if (peer->type == BT_ADDR_LE_PUBLIC_ID ||
+	    peer->type == BT_ADDR_LE_RANDOM_ID) {
+		bt_addr_le_copy(&dst, peer);
+		dst.type -= BT_ADDR_LE_PUBLIC_ID;
+	} else {
+		bt_addr_le_copy(&dst, bt_lookup_id_addr(BT_ID_DEFAULT, peer));
+	}
+
+	conn = bt_conn_add_le(&dst);
 	if (!conn) {
 		return NULL;
 	}
 
 	/* Only default identity supported for now */
 	conn->id = BT_ID_DEFAULT;
-
-	/* Set initial address - will be updated later if necessary. */
-	bt_addr_le_copy(&conn->le.resp_addr, peer);
 
 	bt_conn_set_param_le(conn, param);
 
@@ -2001,6 +2162,7 @@ struct bt_conn *bt_conn_create_le(const bt_addr_le_t *peer,
 	return conn;
 }
 
+#if !defined(CONFIG_BT_WHITELIST)
 int bt_le_set_auto_conn(const bt_addr_le_t *addr,
 			const struct bt_le_conn_param *param)
 {
@@ -2050,6 +2212,7 @@ int bt_le_set_auto_conn(const bt_addr_le_t *addr,
 
 	return 0;
 }
+#endif /* !defined(CONFIG_BT_WHITELIST) */
 #endif /* CONFIG_BT_CENTRAL */
 
 #if defined(CONFIG_BT_PERIPHERAL)
@@ -2146,7 +2309,24 @@ struct net_buf *bt_conn_create_pdu(struct net_buf_pool *pool, size_t reserve)
 		pool = &acl_tx_pool;
 	}
 
-	buf = net_buf_alloc(pool, K_FOREVER);
+	if (IS_ENABLED(CONFIG_BT_DEBUG_CONN) ||
+	    k_current_get() == &k_sys_work_q.thread) {
+		buf = net_buf_alloc(pool, K_NO_WAIT);
+		if (!buf) {
+			BT_WARN("Unable to allocate buffer");
+			/* Cannot block with K_FOREVER on k_sys_work_q as that
+			 * can cause a deadlock when trying to dispatch TX
+			 * notification.
+			 */
+			if (k_current_get() == &k_sys_work_q.thread) {
+				return NULL;
+			}
+			buf = net_buf_alloc(pool, K_FOREVER);
+		}
+	} else {
+		buf = net_buf_alloc(pool, K_FOREVER);
+	}
+
 	__ASSERT_NO_MSG(buf);
 
 	reserve += sizeof(struct bt_hci_acl_hdr) + CONFIG_BT_HCI_RESERVE;

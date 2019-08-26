@@ -22,6 +22,7 @@ if !NET_RAW_MODE
 
 choice
 	prompt "Qemu networking"
+	default NET_QEMU_PPP if NET_PPP
 	default NET_QEMU_SLIP
 	depends on QEMU_TARGET
 	help
@@ -33,6 +34,11 @@ config NET_QEMU_SLIP
 	bool "SLIP"
 	help
 	  Connect to host or to another Qemu via SLIP.
+
+config NET_QEMU_PPP
+	bool "PPP"
+	help
+	  Connect to host via PPP.
 
 config NET_QEMU_ETHERNET
 	bool "Ethernet"
@@ -376,6 +382,14 @@ config NET_CONTEXT_TIMESTAMP
 	  It is possible to timestamp outgoing packets and get information
 	  about these timestamps.
 
+config NET_CONTEXT_TXTIME
+	bool "Add TXTIME support to net_context"
+	select NET_PKT_TXTIME
+	help
+	  It is possible to add information when the outgoing network packet
+	  should be sent. The TX time information should be placed into
+	  ancillary data field in sendmsg call.
+
 config NET_TEST
 	bool "Network Testing"
 	help
@@ -533,8 +547,13 @@ config NET_DEFAULT_IF_DUMMY
 	depends on NET_L2_DUMMY
 
 config NET_DEFAULT_IF_CANBUS
-	bool "Socket CAN interface"
+	bool "6LoCAN (IPv6 over CAN) interface"
 	depends on NET_L2_CANBUS
+
+config NET_DEFAULT_IF_CANBUS_RAW
+	bool "Socket CAN interface"
+	depends on NET_L2_CANBUS_RAW
+
 
 endchoice
 
@@ -564,6 +583,13 @@ config NET_PKT_TIMESTAMP_STACK_SIZE
 	  Set the timestamp thread stack size in bytes. The timestamp
 	  thread waits for timestamped TX frames and calls registered
 	  callbacks.
+
+config NET_PKT_TXTIME
+	bool "Enable network packet TX time support"
+	help
+	  Enable network packet TX time support. This is needed for
+	  when the application wants to set the exact time when the network
+	  packet should be sent.
 
 config NET_PROMISCUOUS_MODE
 	bool "Enable promiscuous mode support [EXPERIMENTAL]"

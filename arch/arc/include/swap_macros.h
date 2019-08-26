@@ -14,10 +14,6 @@
 #include <toolchain.h>
 #include <arch/cpu.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #ifdef _ASMLANGUAGE
 
 /* entering this macro, current is in r2 */
@@ -42,8 +38,14 @@ extern "C" {
 	st r26, [sp, ___callee_saved_stack_t_r26_OFFSET]
 	st fp,  [sp, ___callee_saved_stack_t_fp_OFFSET]
 
+#ifdef CONFIG_ARC_SECURE_FIRMWARE
+	lr r13, [_ARC_V2_SEC_STAT]
+	st_s r13, [sp, ___callee_saved_stack_t_sec_stat_OFFSET]
+#endif
+
 #ifdef CONFIG_USERSPACE
 #ifdef CONFIG_ARC_HAS_SECURE
+#ifdef CONFIG_ARC_SECURE_FIRMWARE
 	lr r13, [_ARC_V2_SEC_U_SP]
 	st r13, [sp, ___callee_saved_stack_t_user_sp_OFFSET]
 	lr r13, [_ARC_V2_SEC_K_SP]
@@ -51,13 +53,25 @@ extern "C" {
 #else
 	lr r13, [_ARC_V2_USER_SP]
 	st r13, [sp, ___callee_saved_stack_t_user_sp_OFFSET]
+	lr r13, [_ARC_V2_KERNEL_SP]
+	st r13, [sp, ___callee_saved_stack_t_kernel_sp_OFFSET]
+#endif /* CONFIG_ARC_SECURE_FIRMWARE */
+#else
+	lr r13, [_ARC_V2_USER_SP]
+	st r13, [sp, ___callee_saved_stack_t_user_sp_OFFSET]
 #endif
 #endif
 	st r30, [sp, ___callee_saved_stack_t_r30_OFFSET]
 
-#ifdef CONFIG_FP_SHARING
+#ifdef CONFIG_ARC_HAS_ACCL_REGS
 	st r58, [sp, ___callee_saved_stack_t_r58_OFFSET]
 	st r59, [sp, ___callee_saved_stack_t_r59_OFFSET]
+#endif
+
+#ifdef CONFIG_FP_SHARING
+	ld r13, [r2, ___thread_base_t_user_options_OFFSET]
+	/* K_FP_REGS is bit 1 */
+	bbit0 r13, 1, 1f
 	lr r13, [_ARC_V2_FPU_STATUS]
 	st_s r13, [sp, ___callee_saved_stack_t_fpu_status_OFFSET]
 	lr r13, [_ARC_V2_FPU_CTRL]
@@ -73,7 +87,7 @@ extern "C" {
 	lr r13, [_ARC_V2_FPU_DPFP2H]
 	st_s r13, [sp, ___callee_saved_stack_t_dpfp2h_OFFSET]
 #endif
-
+1 :
 #endif
 
 	/* save stack pointer in struct k_thread */
@@ -85,9 +99,15 @@ extern "C" {
 	/* restore stack pointer from struct k_thread */
 	ld sp, [r2, _thread_offset_to_sp]
 
-#ifdef CONFIG_FP_SHARING
+#ifdef CONFIG_ARC_HAS_ACCL_REGS
 	ld r58, [sp, ___callee_saved_stack_t_r58_OFFSET]
 	ld r59, [sp, ___callee_saved_stack_t_r59_OFFSET]
+#endif
+
+#ifdef CONFIG_FP_SHARING
+	ld r13, [r2, ___thread_base_t_user_options_OFFSET]
+	/* K_FP_REGS is bit 1 */
+	bbit0 r13, 1, 2f
 
 	ld_s r13, [sp, ___callee_saved_stack_t_fpu_status_OFFSET]
 	sr r13, [_ARC_V2_FPU_STATUS]
@@ -104,11 +124,12 @@ extern "C" {
 	ld_s r13, [sp, ___callee_saved_stack_t_dpfp2h_OFFSET]
 	sr r13, [_ARC_V2_FPU_DPFP2H]
 #endif
-
+2 :
 #endif
 
 #ifdef CONFIG_USERSPACE
 #ifdef CONFIG_ARC_HAS_SECURE
+#ifdef CONFIG_ARC_SECURE_FIRMWARE
 	ld r13, [sp, ___callee_saved_stack_t_user_sp_OFFSET]
 	sr r13, [_ARC_V2_SEC_U_SP]
 	ld r13, [sp, ___callee_saved_stack_t_kernel_sp_OFFSET]
@@ -116,7 +137,19 @@ extern "C" {
 #else
 	ld_s r13, [sp, ___callee_saved_stack_t_user_sp_OFFSET]
 	sr r13, [_ARC_V2_USER_SP]
+	ld r13, [sp, ___callee_saved_stack_t_kernel_sp_OFFSET]
+	sr r13, [_ARC_V2_KERNEL_SP]
+#endif /* CONFIG_ARC_SECURE_FIRMWARE */
+#else
+	ld r13, [sp, ___callee_saved_stack_t_user_sp_OFFSET]
+	sr r13, [_ARC_V2_USER_SP]
 #endif
+#endif
+
+#ifdef CONFIG_ARC_SECURE_FIRMWARE
+	ld r13, [sp, ___callee_saved_stack_t_sec_stat_OFFSET]
+
+	sflag r13
 #endif
 
 	ld_s r13, [sp, ___callee_saved_stack_t_r13_OFFSET]
@@ -247,7 +280,7 @@ extern "C" {
  * _kernel.current. r3 is a scratch reg.
  */
 .macro _load_stack_check_regs
-#ifdef CONFIG_ARC_HAS_SECURE
+#if defined(CONFIG_ARC_SECURE_FIRMWARE)
 	ld r3, [r2, _thread_offset_to_k_stack_base]
 	sr r3, [_ARC_V2_S_KSTACK_BASE]
 	ld r3, [r2, _thread_offset_to_k_stack_top]
@@ -269,13 +302,36 @@ extern "C" {
 	ld r3, [r2, _thread_offset_to_u_stack_top]
 	sr r3, [_ARC_V2_USTACK_TOP]
 #endif
-#endif /* CONFIG_ARC_HAS_SECURE */
+#endif /* CONFIG_ARC_SECURE_FIRMWARE */
+.endm
+
+
+/* If multi bits in IRQ_ACT are set, i.e. last bit != fist bit, it's
+ * in nest interrupt. The result will be EQ bit of status32
+ */
+.macro _check_nest_int_by_irq_act  reg1, reg2
+	lr \reg1, [_ARC_V2_AUX_IRQ_ACT]
+	and \reg1, \reg1, 0xffff
+	ffs \reg2, \reg1
+	fls \reg1, \reg1
+	cmp \reg1, \reg2
+.endm
+
+.macro _get_cpu_id reg
+	lr \reg, [_ARC_V2_IDENTITY]
+	xbfu \reg, \reg, 0xe8
+.endm
+
+.macro _get_curr_cpu_irq_stack irq_sp
+#ifdef CONFIG_SMP
+	_get_cpu_id \irq_sp
+	ld.as \irq_sp, [@_curr_irq_stack, \irq_sp]
+#else
+	mov \irq_sp, _kernel
+	ld \irq_sp, [\irq_sp, _kernel_offset_to_irq_stack]
+#endif
 .endm
 
 #endif /* _ASMLANGUAGE */
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /*  ZEPHYR_ARCH_ARC_INCLUDE_SWAP_MACROS_H_ */

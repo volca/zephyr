@@ -5,18 +5,14 @@
 #
 
 title: RISC-V PLIC
-version: 0.1
 
 description: >
     This binding describes the RISC-V Platform-Local Interrupt Controller
 
 inherits:
-    !include base.yaml
+    !include [interrupt-controller.yaml, base.yaml]
 
 properties:
-  compatible:
-      constraint: "riscv,plic0"
-
   reg:
       category: required
 

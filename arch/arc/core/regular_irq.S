@@ -23,7 +23,7 @@
 GTEXT(_rirq_enter)
 GTEXT(_rirq_exit)
 GTEXT(_rirq_common_interrupt_swap)
-GDATA(exc_nest_count)
+
 
 #if 0 /* TODO: when FIRQ is not present, all would be regular */
 #define NUM_REGULAR_IRQ_PRIO_LEVELS CONFIG_NUM_IRQ_PRIO_LEVELS
@@ -53,12 +53,11 @@ SECTION_FUNC(TEXT, _rirq_enter)
 
 
 #ifdef CONFIG_ARC_STACK_CHECKING
-#ifdef CONFIG_ARC_HAS_SECURE
+#ifdef CONFIG_ARC_SECURE_FIRMWARE
 	lr r2, [_ARC_V2_SEC_STAT]
 	bclr r2, r2, _ARC_V2_SEC_STAT_SSC_BIT
-	/* sflag r2 */
-	/* sflag instruction is not supported in current ARC GNU */
-	.long 0x00bf302f
+	sflag r2
+
 #else
 	/* disable stack checking */
 	lr r2, [_ARC_V2_STATUS32]
@@ -67,16 +66,13 @@ SECTION_FUNC(TEXT, _rirq_enter)
 #endif
 #endif
 	clri
-	ld r1, [exc_nest_count]
-	add r0, r1, 1
-	st r0, [exc_nest_count]
-	cmp r1, 0
 
-	bgt.d  rirq_nest
+	_check_nest_int_by_irq_act r0, r1
+
+	bne.d rirq_nest
 	mov r0, sp
 
-	mov r1, _kernel
-	ld sp, [r1, _kernel_offset_to_irq_stack]
+	_get_curr_cpu_irq_stack sp
 rirq_nest:
 	push_s r0
 
@@ -96,27 +92,9 @@ SECTION_FUNC(TEXT, _rirq_exit)
 
 	pop sp
 
-	mov	r1, exc_nest_count
-	ld	r0, [r1]
-	sub	r0, r0, 1
-	st	r0, [r1]
-	/*
-	 * using exc_nest_count to decide whether is nest int is not reliable.
-	 * a better option is to use IRQ_ACT
-	 * A case is:  a high priority int preempts a low priority int before
-	 * rirq_enter/firq_enter, then in _rirq_exit/_firq_exit, it will see
-	 * exc_nest_cout is 0, this will lead to possible thread switch, but
-	 * a low priority int is still pending.
-	 *
-	 * If multi bits in IRQ_ACT are set, i.e. last bit != fist bit, it's
-	 * in nest interrupt
-	 */
-	lr 	r0, [_ARC_V2_AUX_IRQ_ACT]
-	and 	r0, r0, 0xffff
-	ffs	r1, r0
-	fls	r2, r0
-	cmp	r1, r2
-	jne	_rirq_return_from_rirq
+	_check_nest_int_by_irq_act r0, r1
+
+	jne _rirq_return_from_rirq
 
 #ifdef CONFIG_STACK_SENTINEL
 	bl z_check_stack_sentinel
@@ -124,6 +102,13 @@ SECTION_FUNC(TEXT, _rirq_exit)
 
 #ifdef CONFIG_PREEMPT_ENABLED
 
+#ifdef CONFIG_SMP
+	bl z_arch_smp_switch_in_isr
+	/* r0 points to new thread, r1 points to old thread */
+	cmp r0, 0
+	beq _rirq_no_reschedule
+	mov r2, r1
+#else
 	mov r1, _kernel
 	ld_s r2, [r1, _kernel_offset_to_current]
 
@@ -148,7 +133,7 @@ SECTION_FUNC(TEXT, _rirq_exit)
 	beq _rirq_no_reschedule
 
 	/* cached thread to run is in r0, fall through */
-
+#endif
 .balign 4
 _rirq_reschedule:
 
@@ -157,9 +142,13 @@ _rirq_reschedule:
 
 	st _CAUSE_RIRQ, [r2, _thread_offset_to_relinquish_cause]
 
+#ifdef CONFIG_SMP
+	mov r2, r0
+#else
 	/* incoming thread is in r0: it becomes the new 'current' */
 	mov r2, r0
 	st_s r2, [r1, _kernel_offset_to_current]
+#endif
 
 .balign 4
 _rirq_common_interrupt_swap:
@@ -209,6 +198,12 @@ _rirq_common_interrupt_swap:
 .balign 4
 _rirq_return_from_coop:
 
+#ifdef CONFIG_ARC_SECURE_FIRMWARE
+	/* must return to secure mode, so set IRM bit to 1 */
+	lr r0, [_ARC_V2_SEC_STAT]
+	bset r0, r0, _ARC_V2_SEC_STAT_IRM_BIT
+	sflag r0
+#endif
 	/* carve fake stack */
 	sub sp, sp, ___isf_t_pc_OFFSET
 

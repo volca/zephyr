@@ -116,29 +116,6 @@
 
 #define MMU_ENTRY_EXECUTE_DISABLE   0x8000000000000000ULL
 
-/* Special flag argument for MMU_BOOT region invocations */
-
-/* Indicates that pages within this region may have their user/supervisor
- * permissions adjusted at runtime. Unnecessary if MMU_ENTRY_USER is already
- * set.
- *
- * The result of this is a guarantee that the 'user' bit for all PDEs referring
- * to the region will be set, even if the boot configuration has no user pages
- * in it.
- */
-#define MMU_ENTRY_RUNTIME_USER      0x10000000ULL
-
-/* Indicates that pages within this region may have their read/write
- * permissions adjusted at runtime. Unnecessary if MMU_ENTRY_WRITE is already
- * set.
- *
- * The result of this is a guarantee that the 'write' bit for all PDEs
- * referring to the region will be set, even if the boot configuration has no
- * writable pages in it.
- */
-#define MMU_ENTRY_RUNTIME_WRITE	    0x20000000ULL
-
-
 /* Helper macros to ease the usage of the MMU page table structures.
  */
 
@@ -228,8 +205,8 @@
  * In order to populate this structure use macro MMU_BOOT_REGION.
  */
 struct mmu_region {
-	u32_t address; /*Start address of the memory region */
-	u32_t size; /* Size of the memory region*/
+	uintptr_t address; /*Start address of the memory region */
+	size_t size; /* Size of the memory region*/
 	u64_t flags; /* Permissions needed for this region*/
 };
 
@@ -476,13 +453,21 @@ union x86_mmu_pte {
 	};
 };
 
+#define Z_X86_NUM_PDPT_ENTRIES	4
+#define Z_X86_NUM_PD_ENTRIES	512
+#define Z_X86_NUM_PT_ENTRIES	512
+
+/* Memory range covered by an instance of various table types */
+#define Z_X86_PT_AREA	(MMU_PAGE_SIZE * Z_X86_NUM_PT_ENTRIES)
+#define Z_X86_PD_AREA	(Z_X86_PT_AREA * Z_X86_NUM_PD_ENTRIES)
+#define Z_X86_PDPT_AREA (Z_X86_PD_AREA * Z_X86_NUM_PDPT_ENTRIES)
 
 typedef u64_t x86_page_entry_data_t;
 
 typedef x86_page_entry_data_t k_mem_partition_attr_t;
 
 struct x86_mmu_pdpt {
-	union x86_mmu_pdpte entry[4];
+	union x86_mmu_pdpte entry[Z_X86_NUM_PDPT_ENTRIES];
 };
 
 union x86_mmu_pde {
@@ -491,13 +476,41 @@ union x86_mmu_pde {
 };
 
 struct x86_mmu_pd {
-	union x86_mmu_pde entry[512];
+	union x86_mmu_pde entry[Z_X86_NUM_PD_ENTRIES];
 };
 
 struct x86_mmu_pt {
-	union x86_mmu_pte entry[512];
+	union x86_mmu_pte entry[Z_X86_NUM_PT_ENTRIES];
 };
 
+/**
+ * Debug function for dumping out page tables
+ *
+ * Iterates through the entire linked set of page table structures,
+ * dumping out codes for the configuration of each table entry.
+ *
+ * Entry codes:
+ *
+ *   . - not present
+ *   w - present, writable, not executable
+ *   a - present, writable, executable
+ *   r - present, read-only, not executable
+ *   x - present, read-only, executable
+ *
+ * Entry codes in uppercase indicate that user mode may access.
+ *
+ * @param pdpt Top-level pointer to the page tables, as programmed in CR3
+ */
+void z_x86_dump_page_tables(struct x86_mmu_pdpt *pdpt);
+
+static inline struct x86_mmu_pdpt *z_x86_page_tables_get(void)
+{
+	struct x86_mmu_pdpt *ret;
+
+	__asm__ volatile("movl %%cr3, %0\n\t" : "=r" (ret));
+
+	return ret;
+}
 #endif /* _ASMLANGUAGE */
 
 #endif /* ZEPHYR_ARCH_X86_INCLUDE_IA32_MMUSTRUCTS_H_ */

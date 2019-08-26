@@ -1,12 +1,10 @@
-
 title: ARM CMSDK GPIO
-version: 0.1
 
 description: >
     This binding gives a base representation of the ARM CMSDK GPIO
 
 inherits:
-    !include base.yaml
+    !include [gpio-controller.yaml, base.yaml]
 
 properties:
     compatible:
@@ -17,3 +15,7 @@ properties:
 
     interrupts:
       category: required
+
+"#cells":
+  - pin
+  - flags

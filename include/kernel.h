@@ -195,6 +195,7 @@ struct _k_object_assignment {
 #define K_OBJ_FLAG_INITIALIZED	BIT(0)
 #define K_OBJ_FLAG_PUBLIC	BIT(1)
 #define K_OBJ_FLAG_ALLOC	BIT(2)
+#define K_OBJ_FLAG_DRIVER	BIT(3)
 
 /**
  * Lookup a kernel object and init its metadata if it exists
@@ -4657,8 +4658,7 @@ extern void z_sys_power_save_idle_exit(s32_t ticks);
  */
 #define z_except_reason(reason) do { \
 		printk("@ %s:%d:\n", __FILE__,  __LINE__); \
-		z_NanoFatalErrorHandler(reason, &_default_esf); \
-		k_thread_abort(k_current_get()); \
+		z_fatal_error(reason, NULL); \
 	} while (false)
 
 #endif /* _ARCH__EXCEPT */
@@ -4669,13 +4669,13 @@ extern void z_sys_power_save_idle_exit(s32_t ticks);
  * This should be called when a thread has encountered an unrecoverable
  * runtime condition and needs to terminate. What this ultimately
  * means is determined by the _fatal_error_handler() implementation, which
- * will be called will reason code _NANO_ERR_KERNEL_OOPS.
+ * will be called will reason code K_ERR_KERNEL_OOPS.
  *
  * If this is called from ISR context, the default system fatal error handler
  * will treat it as an unrecoverable system error, just like k_panic().
  * @req K-MISC-003
  */
-#define k_oops()	z_except_reason(_NANO_ERR_KERNEL_OOPS)
+#define k_oops()	z_except_reason(K_ERR_KERNEL_OOPS)
 
 /**
  * @brief Fatally terminate the system
@@ -4683,10 +4683,10 @@ extern void z_sys_power_save_idle_exit(s32_t ticks);
  * This should be called when the Zephyr kernel has encountered an
  * unrecoverable runtime condition and needs to terminate. What this ultimately
  * means is determined by the _fatal_error_handler() implementation, which
- * will be called will reason code _NANO_ERR_KERNEL_PANIC.
+ * will be called will reason code K_ERR_KERNEL_PANIC.
  * @req K-MISC-004
  */
-#define k_panic()	z_except_reason(_NANO_ERR_KERNEL_PANIC)
+#define k_panic()	z_except_reason(K_ERR_KERNEL_PANIC)
 
 /*
  * private APIs that are utilized by one or more public APIs
@@ -4917,6 +4917,9 @@ struct k_mem_domain {
  *
  * Initialize a memory domain with given name and memory partitions.
  *
+ * See documentation for k_mem_domain_add_partition() for details about
+ * partition constraints.
+ *
  * @param domain The memory domain to be initialized.
  * @param num_parts The number of array items of "parts" parameter.
  * @param parts An array of pointers to the memory partitions. Can be NULL
@@ -4938,7 +4941,22 @@ extern void k_mem_domain_destroy(struct k_mem_domain *domain);
 /**
  * @brief Add a memory partition into a memory domain.
  *
- * Add a memory partition into a memory domain.
+ * Add a memory partition into a memory domain. Partitions must conform to
+ * the following constraints:
+ *
+ * - Partition bounds must be within system RAM boundaries on MMU-based
+ *   systems.
+ * - Partitions in the same memory domain may not overlap each other.
+ * - Partitions must not be defined which expose private kernel
+ *   data structures or kernel objects.
+ * - The starting address alignment, and the partition size must conform to
+ *   the constraints of the underlying memory management hardware, which
+ *   varies per architecture.
+ * - Memory domain partitions are only intended to control access to memory
+ *   from user mode threads.
+ *
+ * Violating these constraints may lead to CPU exceptions or undefined
+ * behavior.
  *
  * @param domain The memory domain to be added a memory partition.
  * @param part The memory partition to be added

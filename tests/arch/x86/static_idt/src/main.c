@@ -48,6 +48,17 @@ static volatile int int_handler_executed;
 /* Assume the spurious interrupt handler will execute and abort the task */
 static volatile int spur_handler_aborted_thread = 1;
 
+void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *esf)
+{
+	if (reason != K_ERR_SPURIOUS_IRQ) {
+		printk("wrong error reason\n");
+		k_fatal_halt(reason);
+	}
+	if (k_current_get() != &my_thread) {
+		printk("wrong thread crashed\n");
+		k_fatal_halt(reason);
+	}
+}
 
 /**
  * Handler to perform various actions from within an ISR context
@@ -82,7 +93,7 @@ void isr_handler(void)
  * @return N/A
  */
 
-void exc_divide_error_handler(NANO_ESF *p_esf)
+void exc_divide_error_handler(z_arch_esf_t *p_esf)
 {
 	p_esf->eip += 2;
 	/* provide evidence that the handler executed */

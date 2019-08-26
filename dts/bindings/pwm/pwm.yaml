@@ -5,14 +5,15 @@
 #
 
 title: PWM Base Structure
-version: 0.1
 
 description: >
     This binding gives the base structures for all PWM devices
 
-inherits:
-    !include base.yaml
-
 properties:
     label:
       category: required
+
+    "#pwm-cells":
+      type: int
+      category: required
+      description: Number of items to expect in a pwm specifier

@@ -6,13 +6,12 @@
 
 
 title: MICROCHIP GPIO
-version: 0.1
 
 description: >
     This is a representation of the CEC/MEC GPIO nodes for Microchip
 
 inherits:
-    !include base.yaml
+    !include [gpio-controller.yaml, base.yaml]
 
 properties:
     compatible:

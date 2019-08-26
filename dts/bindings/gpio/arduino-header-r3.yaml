@@ -5,18 +5,13 @@
 #
 
 title: ARDUINO GPIO HEADER
-version: 0.1
 
 description: >
     This is a representation of GPIO pin nodes exposed as headers on Arduino R3
 
 inherits:
-    !include base.yaml
+    !include [gpio-nexus.yaml, base.yaml]
 
 properties:
     compatible:
       constraint: "arduino-header-r3"
-
-    gpio-map:
-      type: compound
-      category: required

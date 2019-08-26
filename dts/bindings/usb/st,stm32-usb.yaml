@@ -5,7 +5,6 @@
 #
 
 title: STM32 USB
-version: 0.1
 
 description: >
     This binding gives a base representation of the STM32 USB controller
@@ -36,7 +35,7 @@ properties:
                    the pull-up resistor on USB Data Positive signal.
 
     phys:
-      type: array
+      type: phandle
       category: optional
       description: PHY provider specifier
 

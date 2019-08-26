@@ -13,3 +13,6 @@ supported:
   - arduino_i2c
   - i2c
   - counter
+  - spi
+  - pwm
+  - adc

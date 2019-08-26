@@ -80,7 +80,7 @@ config CODE_DATA_RELOCATION
 	  When selected this will relocate .text, data and .bss sections from
 	  the specified files and places it in the required memory region. The
 	  files should be specified in the CMakeList.txt file with
-	  a cmake API zephyr_code_relocation().
+	  a cmake API zephyr_code_relocate().
 
 config HAS_FLASH_LOAD_OFFSET
 	bool
@@ -379,13 +379,6 @@ config BOOTLOADER_ESP_IDF
 	  This option will trigger the compilation of the ESP-IDF bootloader
 	  inside the build folder.
 	  At flash time, the bootloader will be flashed with the zephyr image
-
-config REALMODE
-	bool "boot from x86 real mode"
-	depends on X86
-	help
-	  This option enabled Zephyr to start in x86 real mode, instead of
-	  protected mode.
 
 config BOOTLOADER_KEXEC
 	bool "Boot using Linux kexec() system call"

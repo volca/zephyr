@@ -15,6 +15,38 @@ environment, then build and run a sample application.
 Install Host Dependencies
 *************************
 
+.. _python-pip:
+
+Python and pip
+==============
+
+Python 3 and its package manager, pip\ [#pip]_, are used extensively by Zephyr
+to install and run scripts that are required to compile and run Zephyr
+applications.
+
+Depending on your operating system, you may or may not need to provide the
+``--user`` flag to the ``pip3`` command when installing new packages. This is
+documented throughout the instructions.
+See `Installing Packages`_ in the Python Packaging User Guide for more
+information about pip\ [#pip]_, including this `information on -\\-user`_.
+
+- On Linux, make sure ``~/.local/bin`` is on your :envvar:`PATH`
+  :ref:`environment variable <env_vars>`, or programs installed with ``--user``
+  won't be found\ [#linux_user]_.
+
+- On macOS, `Homebrew disables -\\-user`_.
+
+- On Windows, see the Installing Packages information on ``--user`` if you
+  require using this option.
+
+On all operating systems, the ``-U`` flag installs or updates the package if the
+package is already installed locally but a more recent version is available. It
+is good practice to use this flag if the latest version of a package is
+required.
+
+Install the required tools
+===========================
+
 Follow an operating system specific guide, then come back to this page.
 
 .. toctree::
@@ -33,31 +65,20 @@ Zephyr's multi-purpose :ref:`west <west>` tool lets you easily get the Zephyr
 project repositories. (While it's easiest to develop with Zephyr using west,
 we also have :ref:`documentation for doing without it <no-west>`.)
 
-Bootstrap west
-==============
+Install west
+============
 
-First, install the ``west`` binary and bootstrapper using ``pip3``:
+First, install ``west`` using ``pip3``:
 
 .. code-block:: console
 
    # Linux
-   pip3 install --user west
+   pip3 install --user -U west
 
    # macOS (Terminal) and Windows (cmd.exe)
-   pip3 install west
+   pip3 install -U west
 
-See :ref:`west-install` for additional details on installing west. See
-`Installing Packages`_ in the Python Packaging User Guide for more information
-about pip\ [#pip]_, including this `information on -\\-user`_.
-
-- On Linux, make sure ``~/.local/bin`` is on your :envvar:`PATH`
-  :ref:`environment variable <env_vars>`, or programs installed with ``--user``
-  -- like west -- won't be found\ [#linux_user]_.
-
-- On macOS, `Homebrew disables -\\-user`_.
-
-- On Windows, see the Installing Packages information on ``--user`` if you
-  require using this option.
+See :ref:`west-install` for additional details on installing west.
 
 .. _clone-zephyr:
 
@@ -87,7 +108,8 @@ the directory if it doesn't exist. See :ref:`west-multi-repo` for more details.
 Install Python Dependencies
 ***************************
 
-Install Python packages required by Zephyr:
+Install Python packages required by Zephyr. From the :file:`zephyrproject`
+folder that you :ref:`cloned Zephyr into <clone-zephyr>`:
 
 .. code-block:: console
 

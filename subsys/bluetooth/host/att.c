@@ -96,6 +96,7 @@ struct bt_att {
 };
 
 static struct bt_att bt_req_pool[CONFIG_BT_MAX_CONN];
+static struct bt_att_req cancel;
 
 static void att_req_destroy(struct bt_att_req *req)
 {
@@ -149,7 +150,7 @@ static int att_send(struct bt_conn *conn, struct net_buf *buf,
 	return 0;
 }
 
-static void att_pdu_sent(struct bt_conn *conn, void *user_data)
+void att_pdu_sent(struct bt_conn *conn, void *user_data)
 {
 	struct bt_att *att = att_get(conn);
 	struct net_buf *buf;
@@ -174,7 +175,7 @@ static void att_pdu_sent(struct bt_conn *conn, void *user_data)
 	k_sem_give(&att->tx_sem);
 }
 
-static void att_cfm_sent(struct bt_conn *conn, void *user_data)
+void att_cfm_sent(struct bt_conn *conn, void *user_data)
 {
 	struct bt_att *att = att_get(conn);
 
@@ -187,7 +188,7 @@ static void att_cfm_sent(struct bt_conn *conn, void *user_data)
 	att_pdu_sent(conn, user_data);
 }
 
-static void att_rsp_sent(struct bt_conn *conn, void *user_data)
+void att_rsp_sent(struct bt_conn *conn, void *user_data)
 {
 	struct bt_att *att = att_get(conn);
 
@@ -200,7 +201,7 @@ static void att_rsp_sent(struct bt_conn *conn, void *user_data)
 	att_pdu_sent(conn, user_data);
 }
 
-static void att_req_sent(struct bt_conn *conn, void *user_data)
+void att_req_sent(struct bt_conn *conn, void *user_data)
 {
 	struct bt_att *att = att_get(conn);
 
@@ -348,13 +349,19 @@ static u8_t att_handle_rsp(struct bt_att *att, void *pdu, u16_t len, u8_t err)
 {
 	bt_att_func_t func;
 
-	BT_DBG("err %u len %u: %s", err, len, bt_hex(pdu, len));
+	BT_DBG("err 0x%02x len %u: %s", err, len, bt_hex(pdu, len));
 
 	/* Cancel timeout if ongoing */
 	k_delayed_work_cancel(&att->timeout_work);
 
 	if (!att->req) {
 		BT_WARN("No pending ATT request");
+		goto process;
+	}
+
+	/* Check if request has been cancelled */
+	if (att->req == &cancel) {
+		att->req = NULL;
 		goto process;
 	}
 
@@ -573,8 +580,7 @@ static u8_t find_type_cb(const struct bt_gatt_attr *attr, void *user_data)
 
 	/* Skip secondary services */
 	if (!bt_uuid_cmp(attr->uuid, BT_UUID_GATT_SECONDARY)) {
-		data->group = NULL;
-		return BT_GATT_ITER_CONTINUE;
+		goto skip;
 	}
 
 	/* Update group end_handle if not a primary service */
@@ -600,14 +606,29 @@ static u8_t find_type_cb(const struct bt_gatt_attr *attr, void *user_data)
 		 * Since we don't know if it is the service with requested UUID,
 		 * we cannot respond with an error to this request.
 		 */
-		data->group = NULL;
-		return BT_GATT_ITER_CONTINUE;
+		goto skip;
 	}
 
 	/* Check if data matches */
-	if (read != data->value_len || memcmp(data->value, uuid, read)) {
-		data->group = NULL;
-		return BT_GATT_ITER_CONTINUE;
+	if (read != data->value_len) {
+		/* Use bt_uuid_cmp() to compare UUIDs of different form. */
+		struct bt_uuid_128 ref_uuid;
+		struct bt_uuid_128 recvd_uuid;
+
+		if (!bt_uuid_create_le(&recvd_uuid.uuid, data->value,
+				       data->value_len)) {
+			BT_WARN("Unable to create UUID: size %u", data->value_len);
+			goto skip;
+		}
+		if (!bt_uuid_create(&ref_uuid.uuid, uuid, read)) {
+			BT_WARN("Unable to create UUID: size %d", read);
+			goto skip;
+		}
+		if (bt_uuid_cmp(&recvd_uuid.uuid, &ref_uuid.uuid)) {
+			goto skip;
+		}
+	} else if (memcmp(data->value, uuid, read)) {
+		goto skip;
 	}
 
 	/* If service has been found, error should be cleared */
@@ -619,6 +640,10 @@ static u8_t find_type_cb(const struct bt_gatt_attr *attr, void *user_data)
 	data->group->end_handle = sys_cpu_to_le16(attr->handle);
 
 	/* continue to find the end_handle */
+	return BT_GATT_ITER_CONTINUE;
+
+skip:
+	data->group = NULL;
 	return BT_GATT_ITER_CONTINUE;
 }
 
@@ -696,22 +721,6 @@ static u8_t att_find_type_req(struct bt_att *att, struct net_buf *buf)
 
 	return att_find_type_rsp(att, start_handle, end_handle, value,
 				 buf->len);
-}
-
-static bool uuid_create(struct bt_uuid *uuid, struct net_buf *buf)
-{
-	switch (buf->len) {
-	case 2:
-		uuid->type = BT_UUID_TYPE_16;
-		BT_UUID_16(uuid)->val = net_buf_pull_le16(buf);
-		return true;
-	case 16:
-		uuid->type = BT_UUID_TYPE_128;
-		memcpy(BT_UUID_128(uuid)->val, buf->data, buf->len);
-		return true;
-	}
-
-	return false;
 }
 
 static u8_t check_perm(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -884,9 +893,10 @@ static u8_t att_read_type_req(struct bt_att *att, struct net_buf *buf)
 		struct bt_uuid_16 u16;
 		struct bt_uuid_128 u128;
 	} u;
+	u8_t uuid_len = buf->len - sizeof(*req);
 
 	/* Type can only be UUID16 or UUID128 */
-	if (buf->len != sizeof(*req) + 2 && buf->len != sizeof(*req) + 16) {
+	if (uuid_len != 2 && uuid_len != 16) {
 		return BT_ATT_ERR_INVALID_PDU;
 	}
 
@@ -894,8 +904,7 @@ static u8_t att_read_type_req(struct bt_att *att, struct net_buf *buf)
 
 	start_handle = sys_le16_to_cpu(req->start_handle);
 	end_handle = sys_le16_to_cpu(req->end_handle);
-
-	if (!uuid_create(&u.uuid, buf)) {
+	if (!bt_uuid_create_le(&u.uuid, req->uuid, uuid_len)) {
 		return BT_ATT_ERR_UNLIKELY;
 	}
 
@@ -1190,9 +1199,10 @@ static u8_t att_read_group_req(struct bt_att *att, struct net_buf *buf)
 		struct bt_uuid_16 u16;
 		struct bt_uuid_128 u128;
 	} u;
+	u8_t uuid_len = buf->len - sizeof(*req);
 
 	/* Type can only be UUID16 or UUID128 */
-	if (buf->len != sizeof(*req) + 2 && buf->len != sizeof(*req) + 16) {
+	if (uuid_len != 2 && uuid_len != 16) {
 		return BT_ATT_ERR_INVALID_PDU;
 	}
 
@@ -1201,7 +1211,7 @@ static u8_t att_read_group_req(struct bt_att *att, struct net_buf *buf)
 	start_handle = sys_le16_to_cpu(req->start_handle);
 	end_handle = sys_le16_to_cpu(req->end_handle);
 
-	if (!uuid_create(&u.uuid, buf)) {
+	if (!bt_uuid_create_le(&u.uuid, req->uuid, uuid_len)) {
 		return BT_ATT_ERR_UNLIKELY;
 	}
 
@@ -1643,7 +1653,8 @@ static u8_t att_error_rsp(struct bt_att *att, struct net_buf *buf)
 	BT_DBG("request 0x%02x handle 0x%04x error 0x%02x", rsp->request,
 	       sys_le16_to_cpu(rsp->handle), rsp->error);
 
-	if (!att->req) {
+	/* Don't retry if there is no req pending or it has been cancelled */
+	if (!att->req || att->req == &cancel) {
 		err = BT_ATT_ERR_UNLIKELY;
 		goto done;
 	}
@@ -2037,6 +2048,9 @@ struct net_buf *bt_att_create_pdu(struct bt_conn *conn, u8_t op, size_t len)
 	}
 
 	buf = bt_l2cap_create_pdu(NULL, 0);
+	if (!buf) {
+		return NULL;
+	}
 
 	hdr = net_buf_add(buf, sizeof(*hdr));
 	hdr->code = op;
@@ -2318,7 +2332,7 @@ void bt_att_req_cancel(struct bt_conn *conn, struct bt_att_req *req)
 
 	/* Check if request is outstanding */
 	if (att->req == req) {
-		att->req = NULL;
+		att->req = &cancel;
 	} else {
 		/* Remove request from the list */
 		sys_slist_find_and_remove(&att->reqs, &req->node);

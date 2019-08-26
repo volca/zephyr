@@ -5,13 +5,12 @@
 #
 
 title: Kinetis FTM
-version: 0.1
 
 description: >
     This binding gives a base representation of the Kinetis FTM
 
 inherits:
-    !include pwm.yaml
+    !include [pwm.yaml, base.yaml]
 
 properties:
     compatible:

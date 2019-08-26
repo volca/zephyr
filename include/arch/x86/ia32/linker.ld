@@ -81,24 +81,11 @@ SECTIONS
 
 
 	GROUP_START(ROMABLE_REGION)
-#ifdef CONFIG_REALMODE
-	/* 16-bit sections */
-	. = PHYS_RAM_ADDR;
 
-	SECTION_PROLOGUE(boot,,)
-	{
-	*(.boot)
-	. = ALIGN(16);
-	} GROUP_LINK_IN(ROMABLE_REGION)
-#endif
 	. = ALIGN(8);
 
 	_image_rom_start = PHYS_LOAD_ADDR;
-#ifndef CONFIG_REALMODE
 	_image_text_start = PHYS_LOAD_ADDR;
-#else
-	_image_text_start = .;
-#endif
 	SECTION_PROLOGUE(_TEXT_SECTION_NAME,,)
 	{
 	. = CONFIG_TEXT_SECTION_OFFSET;
@@ -131,6 +118,13 @@ SECTIONS
 	*(.rodata)
 	*(".rodata.*")
 	*(.gnu.linkonce.r.*)
+
+#ifdef CONFIG_X86_MMU
+	. = ALIGN(4);
+	z_x86_mmulist_start = .;
+	KEEP(*(.mmulist))
+	z_x86_mmulist_end = .;
+#endif /* CONFIG_X86_MMU */
 
 #ifndef CONFIG_DYNAMIC_INTERRUPTS
 	. = ALIGN(8);
@@ -362,29 +356,6 @@ SECTIONS
 
 #include <linker/common-ram.ld>
 
-#ifdef CONFIG_X86_MMU
-	/* Can't really predict the size of this section. Anything after this
-	 * should not be affected if addresses change between builds (currently
-	 * just the gperf tables which is fine).
-	 *
-	 * However, __mmu_tables_start *must* remain stable between builds,
-	 * we can't have anything shifting the memory map beforehand.
-	 */
-	SECTION_DATA_PROLOGUE(mmu_tables,,)
-	{
-	/* Page Tables are located here if MMU is enabled.*/
-	MMU_PAGE_ALIGN
-	__mmu_tables_start = .;
-	z_x86_kernel_pdpt = .;
-	KEEP(*(mmu_tables));
-#ifdef CONFIG_X86_KPTI
-	z_x86_user_pdpt = .;
-	KEEP(*(user_mmu_tables));
-#endif /* CONFIG_X86_KPTI */
-	__mmu_tables_end = .;
-	} GROUP_DATA_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
-#endif
-
 #include <linker/kobject.ld>
 
 	MMU_PAGE_ALIGN
@@ -410,23 +381,6 @@ SECTIONS
 	KEEP(*(.intList))
 	KEEP(*(.gnu.linkonce.intList.*))
 	} > IDT_LIST
-
-#ifdef CONFIG_X86_MMU
-	/* Memory management unit*/
-	SECTION_PROLOGUE(mmulist,,)
-	{
-	/* get size of the mmu lists needed for gen_mmu_x86.py*/
-	LONG((__MMU_LIST_END__ - __MMU_LIST_START__) / __MMU_REGION_SIZEOF)
-	/* Get the start of mmu tables in data section so that the address
-	 * of the page tables can be calculated.
-	 */
-	LONG(__mmu_tables_start)
-	__MMU_LIST_START__ = .;
-	KEEP(*(.mmulist))
-	__MMU_LIST_END__ = .;
-	} > MMU_LIST
-#endif /* CONFIG_X86_MMU */
-
 #else
 	/DISCARD/ :
 	{
@@ -434,7 +388,6 @@ SECTIONS
 	KEEP(*(.spurNoErrIsr))
 	KEEP(*(.intList))
 	KEEP(*(.gnu.linkonce.intList.*))
-	KEEP(*(.mmulist))
 	}
 #endif
 

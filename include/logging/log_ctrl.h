@@ -7,6 +7,7 @@
 #define ZEPHYR_INCLUDE_LOGGING_LOG_CTRL_H_
 
 #include <logging/log_backend.h>
+#include <kernel.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -168,7 +169,7 @@ void log_backend_enable(struct log_backend const *const backend,
  */
 void log_backend_disable(struct log_backend const *const backend);
 
-#if CONFIG_LOG
+#if defined(CONFIG_LOG)
 #define LOG_INIT() log_init()
 #define LOG_PANIC() log_panic()
 #define LOG_PROCESS() log_process(false)

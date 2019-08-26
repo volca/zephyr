@@ -142,6 +142,7 @@ More information about STM32WB55RG can be found here:
 
 - `STM32WB55RG on www.st.com`_
 - `STM32WB5RG datasheet`_
+- `STM32WB5RG reference manual`_
 
 Supported Features
 ==================
@@ -161,6 +162,12 @@ The Zephyr nucleo_wb55rg board configuration supports the following hardware fea
 | GPIO      | on-chip    | gpio                                |
 +-----------+------------+-------------------------------------+
 | I2C       | on-chip    | i2c                                 |
++-----------+------------+-------------------------------------+
+| SPI       | on-chip    | spi                                 |
++-----------+------------+-------------------------------------+
+| PWM       | on-chip    | pwm                                 |
++-----------+------------+-------------------------------------+
+| ADC       | on-chip    | adc                                 |
 +-----------+------------+-------------------------------------+
 
 Other hardware features are not yet supported on this Zephyr port.
@@ -190,6 +197,12 @@ Default Zephyr Peripheral Mapping:
 - LD1 : PB5
 - LD2 : PB0
 - LD3 : PB1
+- SPI_1_NSS : PA4 (arduino_spi)
+- SPI_1_SCK : PA5 (arduino_spi)
+- SPI_1_MISO : PA6 (arduino_spi)
+- SPI_1_MOSI : PA7 (arduino_spi)
+- PWM_2 CH 1 : PA0
+- ADC_1_CH3 : PC2
 
 System Clock
 ------------
@@ -269,3 +282,6 @@ You can debug an application in the usual way.  Here is an example for the
 
 .. _STM32WB5RG datasheet:
    https://www.st.com/resource/en/datasheet/stm32wb55rg.pdf
+
+.. _STM32WB5RG reference manual:
+   https://www.st.com/resource/en/reference_manual/dm00318631.pdf

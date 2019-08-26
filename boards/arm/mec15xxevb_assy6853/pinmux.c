@@ -44,7 +44,8 @@ static int board_pinmux_init(struct device *dev)
 	 * controlled by their respective PCR register (UART2).
 	 * For more details see table 44-1
 	 */
-	ECS_REGS->DEBUG_CTRL |= 0x4;
+	ECS_REGS->DEBUG_CTRL = (MCHP_ECS_DCTRL_DBG_EN |
+				MCHP_ECS_DCTRL_MODE_SWD);
 
 	/* See table 2-4 from the data sheet for pin multiplexing*/
 #ifdef CONFIG_UART_NS16550_PORT_2
@@ -75,6 +76,23 @@ static int board_pinmux_init(struct device *dev)
 	/* Set muxing, for I2C2 - SMB04 */
 	pinmux_pin_set(portd, MCHP_GPIO_143, MCHP_GPIO_CTRL_MUX_F1);
 	pinmux_pin_set(portd, MCHP_GPIO_144, MCHP_GPIO_CTRL_MUX_F1);
+#endif
+
+#ifdef CONFIG_ESPI_XEC
+	mchp_pcr_periph_slp_ctrl(PCR_ESPI, MCHP_PCR_SLEEP_DIS);
+	/* ESPI RESET */
+	pinmux_pin_set(portb, MCHP_GPIO_061, MCHP_GPIO_CTRL_MUX_F1);
+	/* ESPI ALERT */
+	pinmux_pin_set(portb, MCHP_GPIO_063, MCHP_GPIO_CTRL_MUX_F1);
+	/* ESPI CS */
+	pinmux_pin_set(portb, MCHP_GPIO_066, MCHP_GPIO_CTRL_MUX_F1);
+	/* ESPI CLK */
+	pinmux_pin_set(portb, MCHP_GPIO_065, MCHP_GPIO_CTRL_MUX_F1);
+	/* ESPI IO1-4*/
+	pinmux_pin_set(portb, MCHP_GPIO_070, MCHP_GPIO_CTRL_MUX_F1);
+	pinmux_pin_set(portb, MCHP_GPIO_071, MCHP_GPIO_CTRL_MUX_F1);
+	pinmux_pin_set(portb, MCHP_GPIO_072, MCHP_GPIO_CTRL_MUX_F1);
+	pinmux_pin_set(portb, MCHP_GPIO_073, MCHP_GPIO_CTRL_MUX_F1);
 #endif
 	return 0;
 }

@@ -36,6 +36,7 @@
 
 #include "ll.h"
 #include "ll_feat.h"
+#include "ll_settings.h"
 
 #define LOG_MODULE_NAME bt_ctlr_llsw_ull_conn
 #include "common/log.h"
@@ -1146,8 +1147,8 @@ void ull_conn_done(struct node_rx_event_done *done)
 void ull_conn_tx_demux(u8_t count)
 {
 	do {
-		struct ll_conn *conn;
 		struct lll_tx *lll_tx;
+		struct ll_conn *conn;
 
 		lll_tx = MFIFO_DEQUEUE_GET(conn_tx);
 		if (!lll_tx) {
@@ -1233,6 +1234,9 @@ void ull_conn_tx_lll_enqueue(struct ll_conn *conn, u8_t count)
 				conn->tx_data = conn->tx_data->next;
 			}
 			conn->tx_head = conn->tx_head->next;
+
+			/* point to NULL to indicate a Data PDU mem alloc */
+			tx_lll->next = NULL;
 		}
 
 		link = mem_acquire(&mem_link_tx.free);
@@ -1323,8 +1327,10 @@ void ull_conn_lll_tx_flush(void *param)
 
 		lll_tx->handle = 0xFFFF;
 		lll_tx->node = tx;
-		link->next = tx->next;
-		tx->link = link;
+
+		/* TX node UPSTREAM, i.e. Tx node ack path */
+		link->next = tx->next; /* Indicates ctrl pool or data pool */
+		tx->next = link;
 
 		MFIFO_ENQUEUE(conn_ack, idx);
 
@@ -1351,11 +1357,15 @@ struct ll_conn *ull_conn_tx_ack(u16_t handle, memq_link_t *link,
 
 		/* release mem if points to itself */
 		if (link->next == (void *)tx) {
-			mem_release(tx, &mem_conn_tx_ctrl.free);
 
+			LL_ASSERT(link->next);
+
+			mem_release(tx, &mem_conn_tx_ctrl.free);
 			return conn;
 		} else if (!tx) {
 			return conn;
+		} else {
+			LL_ASSERT(!link->next);
 		}
 	} else if (handle != 0xFFFF) {
 		conn = ll_conn_get(handle);
@@ -2377,8 +2387,8 @@ static inline void event_vex_prep(struct ll_conn *conn)
 				PDU_DATA_LLCTRL_TYPE_VERSION_IND;
 			pdu->llctrl.version_ind.version_number =
 				LL_VERSION_NUMBER;
-			cid = sys_cpu_to_le16(CONFIG_BT_CTLR_COMPANY_ID);
-			svn = sys_cpu_to_le16(CONFIG_BT_CTLR_SUBVERSION_NUMBER);
+			cid = sys_cpu_to_le16(ll_settings_company_id());
+			svn = sys_cpu_to_le16(ll_settings_subversion_number());
 			pdu->llctrl.version_ind.company_id = cid;
 			pdu->llctrl.version_ind.sub_version_number = svn;
 
@@ -3530,9 +3540,9 @@ static int version_ind_send(struct ll_conn *conn, struct node_rx_pdu *rx,
 		pdu_tx->llctrl.opcode = PDU_DATA_LLCTRL_TYPE_VERSION_IND;
 		v = &pdu_tx->llctrl.version_ind;
 		v->version_number = LL_VERSION_NUMBER;
-		v->company_id =	sys_cpu_to_le16(CONFIG_BT_CTLR_COMPANY_ID);
+		v->company_id =	sys_cpu_to_le16(ll_settings_company_id());
 		v->sub_version_number =
-			sys_cpu_to_le16(CONFIG_BT_CTLR_SUBVERSION_NUMBER);
+			sys_cpu_to_le16(ll_settings_subversion_number());
 
 		ctrl_tx_sec_enqueue(conn, tx);
 
@@ -3794,6 +3804,7 @@ static void reject_ext_ind_recv(struct ll_conn *conn, struct node_rx_pdu *rx,
 			conn->llcp_enc.pause_tx = 0U;
 
 			/* Procedure complete */
+			conn->llcp_ack = conn->llcp_req;
 			conn->procedure_expire = 0U;
 
 			/* enqueue as if it were a reject ind */
@@ -3855,7 +3866,6 @@ static inline int length_req_rsp_recv(struct ll_conn *conn, memq_link_t *link,
 	u16_t eff_rx_time;
 	u16_t eff_tx_time;
 #endif /* CONFIG_BT_CTLR_PHY */
-	u8_t nack = 0U;
 
 	/* Check for free ctrl tx PDU */
 	if (pdu_rx->llctrl.opcode == PDU_DATA_LLCTRL_TYPE_LENGTH_REQ) {
@@ -4032,21 +4042,20 @@ static inline int length_req_rsp_recv(struct ll_conn *conn, memq_link_t *link,
 
 send_length_resp:
 	if (tx) {
-		if (nack) {
-			mem_release(tx, &mem_conn_tx_ctrl.free);
-		} else {
+		/* FIXME: if nack-ing is implemented then release tx instead
+		 *        of sending resp.
+		 */
 #if !defined(CONFIG_BT_CTLR_PHY)
-			length_resp_send(conn, tx, eff_rx_octets,
-					 eff_tx_octets);
+		length_resp_send(conn, tx, eff_rx_octets,
+				 eff_tx_octets);
 #else /* CONFIG_BT_CTLR_PHY */
-			length_resp_send(conn, tx, eff_rx_octets,
-					 eff_rx_time, eff_tx_octets,
-					 eff_tx_time);
+		length_resp_send(conn, tx, eff_rx_octets,
+				 eff_rx_time, eff_tx_octets,
+				 eff_tx_time);
 #endif /* CONFIG_BT_CTLR_PHY */
-		}
 	}
 
-	return nack;
+	return 0;
 }
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH */
 
@@ -4697,8 +4706,8 @@ static inline int ctrl_rx(memq_link_t *link, struct node_rx_pdu **rx,
 		conn->llcp_enc.pause_tx = 0U;
 
 		/* Procedure complete */
+		conn->llcp_ack = conn->llcp_req;
 		conn->procedure_expire = 0U;
-
 		break;
 #endif /* CONFIG_BT_CTLR_LE_ENC */
 

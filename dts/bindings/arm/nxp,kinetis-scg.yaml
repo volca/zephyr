@@ -5,13 +5,12 @@
 #
 
 title: NXP Kinetis SCG (System Clock Generator)
-version: 0.1
 
 description: >
     This is a representation of the NXP Kinetis SCG IP node
 
 inherits:
-    !include base.yaml
+    !include [clock.yaml, base.yaml]
 
 properties:
     compatible:
@@ -124,8 +123,6 @@ properties:
       category: optional
 
     "#clock-cells":
-      type: int
-      category: required
       description: should be 1.
 
 "#cells":

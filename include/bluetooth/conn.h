@@ -17,14 +17,14 @@
  * @{
  */
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <stdbool.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /** Opaque type representing a connection to a remote device */
 struct bt_conn;
@@ -124,8 +124,16 @@ enum {
 
 /** LE Connection Info Structure */
 struct bt_conn_le_info {
-	const bt_addr_le_t *src; /** Source (Local) Address */
-	const bt_addr_le_t *dst; /** Destination (Remote) Address */
+	/** Source (Local) Identity Address */
+	const bt_addr_le_t *src;
+	/** Destination (Remote) Identity Address or remote Resolvable Private
+	 *  Address (RPA) before identity has been resolved.
+	 */
+	const bt_addr_le_t *dst;
+	/** Local device address used during connection setup. */
+	const bt_addr_le_t *local;
+	/** Remote device address used during connection setup. */
+	const bt_addr_le_t *remote;
 	u16_t interval; /** Connection interval */
 	u16_t latency; /** Connection slave latency */
 	u16_t timeout; /** Connection supervision timeout */
@@ -201,6 +209,8 @@ int bt_conn_disconnect(struct bt_conn *conn, u8_t reason);
  *  Allows initiate new LE link to remote peer using its address.
  *  Returns a new reference that the the caller is responsible for managing.
  *
+ *  This uses the General Connection Establishment procedure.
+ *
  *  @param peer  Remote address.
  *  @param param Initial connection parameters.
  *
@@ -208,6 +218,22 @@ int bt_conn_disconnect(struct bt_conn *conn, u8_t reason);
  */
 struct bt_conn *bt_conn_create_le(const bt_addr_le_t *peer,
 				  const struct bt_le_conn_param *param);
+
+/** @brief Automatically connect to remote devices in whitelist.
+ *
+ *  This uses the Auto Connection Establishment procedure.
+ *
+ *  @param param Initial connection parameters.
+ *
+ *  @return Zero on success or (negative) error code on failure.
+ */
+int bt_conn_create_auto_le(const struct bt_le_conn_param *param);
+
+/** @brief Stop automatic connect creation.
+ *
+ *  @return Zero on success or (negative) error code on failure.
+ */
+int bt_conn_create_auto_stop(void);
 
 /** @brief Automatically connect to remote device if it's in range.
  *

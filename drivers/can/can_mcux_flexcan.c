@@ -167,6 +167,9 @@ static void mcux_flexcan_copy_frame_to_zframe(const flexcan_frame_t *src,
 	dest->dlc = src->length;
 	dest->data_32[0] = sys_be32_to_cpu(src->dataWord0);
 	dest->data_32[1] = sys_be32_to_cpu(src->dataWord1);
+#ifdef CONFIG_CAN_RX_TIMESTAMP
+	dest->timestamp = src->timestamp;
+#endif /* CAN_RX_TIMESTAMP */
 }
 
 static void mcux_flexcan_copy_zfilter_to_mbconfig(const struct zcan_filter *src,
@@ -213,6 +216,8 @@ static int mcux_flexcan_send(struct device *dev, const struct zcan_frame *msg,
 	}
 
 	mcux_flexcan_copy_zframe_to_frame(msg, &data->tx_cbs[alloc].frame);
+	data->tx_cbs[alloc].function = callback_isr;
+	data->tx_cbs[alloc].arg = callback_arg;
 	xfer.frame = &data->tx_cbs[alloc].frame;
 	xfer.mbIdx = ALLOC_IDX_TO_TXMB_IDX(alloc);
 	FLEXCAN_SetTxMbConfig(config->base, xfer.mbIdx, true);
@@ -277,6 +282,7 @@ static int mcux_flexcan_attach_isr(struct device *dev, can_rx_callback_t isr,
 	if (status != kStatus_Success) {
 		LOG_ERR("Failed to start rx for filter id %d (err = %d)",
 			alloc, status);
+		alloc = CAN_NO_FREE_FILTER;
 	}
 
 	k_mutex_unlock(&data->rx_mutex);
@@ -290,17 +296,23 @@ static void mcux_flexcan_detach(struct device *dev, int filter_id)
 	struct mcux_flexcan_data *data = dev->driver_data;
 
 	if (filter_id >= MCUX_FLEXCAN_MAX_RX) {
+		LOG_ERR("Detach: Filter id >= MAX_RX (%d >= %d)", filter_id,
+			MCUX_FLEXCAN_MAX_RX);
 		return;
 	}
 
 	k_mutex_lock(&data->rx_mutex, K_FOREVER);
 
 	if (atomic_test_and_clear_bit(data->rx_allocs, filter_id)) {
+		FLEXCAN_TransferAbortReceive(config->base, &data->handle,
+					     ALLOC_IDX_TO_RXMB_IDX(filter_id));
 		FLEXCAN_SetRxMbConfig(config->base,
 				      ALLOC_IDX_TO_RXMB_IDX(filter_id), NULL,
 				      false);
 		data->rx_cbs[filter_id].function = NULL;
 		data->rx_cbs[filter_id].arg = NULL;
+	} else {
+		LOG_WRN("Filter ID %d already detached", filter_id);
 	}
 
 	k_mutex_unlock(&data->rx_mutex);

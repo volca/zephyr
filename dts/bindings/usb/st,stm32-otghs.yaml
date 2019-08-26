@@ -5,7 +5,6 @@
 #
 
 title: STM32 OTGHS
-version: 0.1
 
 description: >
     This binding gives a base representation of the STM32 OTG HS controller
@@ -30,7 +29,7 @@ properties:
                    manual defines a shared FIFO size.
 
     phys:
-      type: array
+      type: phandle
       category: optional
       description: PHY provider specifier
 

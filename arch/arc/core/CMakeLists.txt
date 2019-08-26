@@ -14,7 +14,6 @@ zephyr_library_sources(
 	isr_wrapper.S
 	regular_irq.S
 	switch.S
-	sys_fatal_error_handler.c
 	prep_c.c
 	reset.S
 	vector_table.c
@@ -24,6 +23,8 @@ zephyr_library_sources_ifdef(CONFIG_CACHE_FLUSHING cache.c)
 zephyr_library_sources_ifdef(CONFIG_ARC_FIRQ fast_irq.S)
 
 zephyr_library_sources_if_kconfig(irq_offload.c)
-zephyr_library_sources_ifdef(CONFIG_ATOMIC_OPERATIONS_CUSTOM atomic.c)
 add_subdirectory_ifdef(CONFIG_ARC_CORE_MPU mpu)
+add_subdirectory_ifdef(CONFIG_ARC_SECURE_FIRMWARE secureshield)
 zephyr_library_sources_ifdef(CONFIG_USERSPACE userspace.S)
+zephyr_library_sources_ifdef(CONFIG_ARC_CONNECT arc_connect.c)
+zephyr_library_sources_ifdef(CONFIG_SMP arc_smp.c)
