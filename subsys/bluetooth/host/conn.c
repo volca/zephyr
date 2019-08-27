@@ -744,6 +744,21 @@ static int ssp_confirm_neg_reply(struct bt_conn *conn)
 				    NULL);
 }
 
+void bt_conn_ssp_auth_complete(struct bt_conn *conn, u8_t status)
+{
+	if (!status) {
+		bool bond = !atomic_test_bit(conn->flags, BT_CONN_BR_NOBOND);
+
+		if (bt_auth && bt_auth->pairing_complete) {
+			bt_auth->pairing_complete(conn, bond);
+		}
+	} else {
+		if (bt_auth && bt_auth->pairing_failed) {
+			bt_auth->pairing_failed(conn, status);
+		}
+	}
+}
+
 void bt_conn_ssp_auth(struct bt_conn *conn, u32_t passkey)
 {
 	conn->br.pairing_method = ssp_pair_method(conn);
@@ -969,13 +984,13 @@ u8_t bt_conn_enc_key_size(struct bt_conn *conn)
 	return 0;
 }
 
-void bt_conn_security_changed(struct bt_conn *conn)
+void bt_conn_security_changed(struct bt_conn *conn, enum bt_security_err err)
 {
 	struct bt_conn_cb *cb;
 
 	for (cb = callback_list; cb; cb = cb->_next) {
 		if (cb->security_changed) {
-			cb->security_changed(conn, conn->sec_level);
+			cb->security_changed(conn, conn->sec_level, err);
 		}
 	}
 }
@@ -1043,7 +1058,9 @@ int bt_conn_security(struct bt_conn *conn, bt_security_t sec)
 		return 0;
 	}
 
-	conn->required_sec_level = sec;
+	atomic_set_bit_to(conn->flags, BT_CONN_FORCE_PAIR,
+			  sec & BT_SECURITY_FORCE_PAIR);
+	conn->required_sec_level = sec & ~BT_SECURITY_FORCE_PAIR;
 
 	err = start_security(conn);
 

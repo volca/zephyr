@@ -213,12 +213,20 @@ static void identity_resolved(struct bt_conn *conn, const bt_addr_le_t *rpa,
 #endif
 
 #if defined(CONFIG_BT_SMP) || defined(CONFIG_BT_BREDR)
-static void security_changed(struct bt_conn *conn, bt_security_t level)
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+			     enum bt_security_err err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	conn_addr_str(conn, addr, sizeof(addr));
-	shell_print(ctx_shell, "Security changed: %s level %u", addr, level);
+
+	if (!err) {
+		shell_print(ctx_shell, "Security changed: %s level %u", addr,
+			    level);
+	} else {
+		shell_print(ctx_shell, "Security failed: %s level %u reason %d",
+			    addr, level, err);
+	}
 }
 #endif
 
@@ -1079,6 +1087,15 @@ static int cmd_security(const struct shell *shell, size_t argc, char *argv[])
 		return -ENOEXEC;
 	}
 
+	if (argc > 2) {
+		if (!strcmp(argv[2], "force-pair")) {
+			sec |= BT_SECURITY_FORCE_PAIR;
+		} else {
+			shell_help(shell);
+			return -ENOEXEC;
+		}
+	}
+
 	err = bt_conn_security(default_conn, sec);
 	if (err) {
 		shell_error(shell, "Setting security failed (err %d)", err);
@@ -1239,13 +1256,15 @@ static void auth_pairing_complete(struct bt_conn *conn, bool bonded)
 		    addr);
 }
 
-static void auth_pairing_failed(struct bt_conn *conn)
+static void auth_pairing_failed(struct bt_conn *conn,
+				enum bt_security_err reason)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	shell_print(ctx_shell, "Pairing failed with %s", addr);
+	shell_print(ctx_shell, "Pairing failed with %s reason %d", addr,
+		    reason);
 }
 
 #if defined(CONFIG_BT_BREDR)
@@ -1358,8 +1377,8 @@ static struct bt_conn_auth_cb auth_cb_oob = {
 	.oob_data_request = auth_pairing_oob_data_request,
 	.cancel = auth_cancel,
 	.pairing_confirm = NULL,
-	.pairing_failed = NULL,
-	.pairing_complete = NULL,
+	.pairing_failed = auth_pairing_failed,
+	.pairing_complete = auth_pairing_complete,
 };
 
 
@@ -1615,8 +1634,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(bt_cmds,
 	SHELL_CMD_ARG(clear, NULL, "<remote: addr, all>", cmd_clear, 2, 1),
 #if defined(CONFIG_BT_SMP) || defined(CONFIG_BT_BREDR)
 	SHELL_CMD_ARG(security, NULL, "<security level BR/EDR: 0 - 3, "
-				      "LE: 1 - 4>",
-		      cmd_security, 2, 0),
+				      "LE: 1 - 4> [force-pair]",
+		      cmd_security, 2, 1),
 	SHELL_CMD_ARG(bondable, NULL, "<bondable: on, off>", cmd_bondable,
 		      2, 0),
 	SHELL_CMD_ARG(auth, NULL,

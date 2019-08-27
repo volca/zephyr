@@ -81,6 +81,8 @@ struct uarte_async_cb {
 
 	bool rx_enabled;
 	bool hw_rx_counting;
+	/* Flag to ensure that RX timeout won't be executed during ENDRX ISR */
+	volatile bool is_in_irq;
 };
 #endif
 
@@ -588,6 +590,16 @@ static void rx_timeout(struct k_timer *timer)
 	const struct uarte_nrfx_config *cfg = get_dev_config(dev);
 	u32_t read;
 
+	if (data->async->is_in_irq) {
+		return;
+	}
+
+	/* Disable ENDRX ISR, in case ENDRX event is generated, it will be
+	 * handled after rx_timeout routine is complete.
+	 */
+	nrf_uarte_int_disable(get_uarte_instance(dev),
+			      NRF_UARTE_INT_ENDRX_MASK);
+
 	if (hw_rx_counting_enabled(data)) {
 		read = nrfx_timer_capture(&cfg->timer, 0);
 	} else {
@@ -623,6 +635,9 @@ static void rx_timeout(struct k_timer *timer)
 				data->async->rx_timeout_slab;
 		}
 	}
+
+	nrf_uarte_int_enable(get_uarte_instance(dev),
+			     NRF_UARTE_INT_ENDRX_MASK);
 }
 
 #define UARTE_ERROR_FROM_MASK(mask)					\
@@ -667,6 +682,9 @@ static void endrx_isr(struct device *dev)
 	if (!data->async->rx_enabled) {
 		return;
 	}
+
+	data->async->is_in_irq = true;
+
 	if (data->async->rx_next_buf) {
 		nrf_uarte_task_trigger(uarte, NRF_UARTE_TASK_STARTRX);
 	}
@@ -674,6 +692,18 @@ static void endrx_isr(struct device *dev)
 
 	size_t rx_len = nrf_uarte_rx_amount_get(uarte)
 			- data->async->rx_offset;
+
+	data->async->rx_total_user_byte_cnt += rx_len;
+
+	if (!hw_rx_counting_enabled(data)) {
+		/* Prevent too low value of rx_cnt.cnt which may occur due to
+		 * latencies in handling of the RXRDY interrupt. Because whole
+		 * buffer was filled we can be sure that rx_total_user_byte_cnt
+		 * is current total number of received bytes.
+		 */
+		data->async->rx_cnt.cnt = data->async->rx_total_user_byte_cnt;
+	}
+
 	struct uart_event evt = {
 		.type = UART_RX_RDY,
 		.data.rx.buf = data->async->rx_buf,
@@ -690,13 +720,14 @@ static void endrx_isr(struct device *dev)
 		data->async->rx_buf = data->async->rx_next_buf;
 		data->async->rx_next_buf = NULL;
 
-		data->async->rx_total_user_byte_cnt += rx_len;
 		data->async->rx_offset = 0;
 	} else {
 		data->async->rx_buf = NULL;
 		evt.type = UART_RX_DISABLED;
 		user_callback(dev, &evt);
 	}
+
+	data->async->is_in_irq = false;
 }
 
 /* This handler is called when the reception is interrupted, in contrary to

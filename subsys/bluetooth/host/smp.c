@@ -304,9 +304,19 @@ no_callbacks:
 	}
 }
 
+#if !defined(CONFIG_BT_SMP_SC_PAIR_ONLY)
+static u8_t legacy_get_pair_method(struct bt_smp *smp, u8_t remote_io);
+#endif
+
 static u8_t get_pair_method(struct bt_smp *smp, u8_t remote_io)
 {
 	struct bt_smp_pairing *req, *rsp;
+
+#if !defined(CONFIG_BT_SMP_SC_PAIR_ONLY)
+	if (!atomic_test_bit(smp->flags, SMP_FLAG_SC)) {
+		return legacy_get_pair_method(smp, remote_io);
+	}
+#endif
 
 	req = (struct bt_smp_pairing *)&smp->preq[1];
 	rsp = (struct bt_smp_pairing *)&smp->prsp[1];
@@ -328,6 +338,34 @@ static u8_t get_pair_method(struct bt_smp *smp, u8_t remote_io)
 	}
 
 	return gen_method_sc[remote_io][get_io_capa()];
+}
+
+static enum bt_security_err auth_err_get(u8_t smp_err)
+{
+	switch (smp_err) {
+	case BT_SMP_ERR_PASSKEY_ENTRY_FAILED:
+	case BT_SMP_ERR_DHKEY_CHECK_FAILED:
+	case BT_SMP_ERR_NUMERIC_COMP_FAILED:
+	case BT_SMP_ERR_CONFIRM_FAILED:
+		return BT_SECURITY_ERR_AUTHENTICATION_FAIL;
+	case BT_SMP_ERR_OOB_NOT_AVAIL:
+		return BT_SECURITY_ERR_OOB_NOT_AVAILABLE;
+	case BT_SMP_ERR_AUTH_REQUIREMENTS:
+	case BT_SMP_ERR_ENC_KEY_SIZE:
+		return BT_SECURITY_ERR_AUTHENTICATION_REQUIREMENT;
+	case BT_SMP_ERR_PAIRING_NOTSUPP:
+	case BT_SMP_ERR_CMD_NOTSUPP:
+		return BT_SECURITY_ERR_PAIR_NOT_SUPPORTED;
+	case BT_SMP_ERR_REPEATED_ATTEMPTS:
+	case BT_SMP_ERR_BREDR_PAIRING_IN_PROGRESS:
+	case BT_SMP_ERR_CROSS_TRANSP_NOT_ALLOWED:
+		return BT_SECURITY_ERR_PAIR_NOT_ALLOWED;
+	case BT_SMP_ERR_INVALID_PARAMS:
+		return BT_SECURITY_ERR_INVALID_PARAM;
+	case BT_SMP_ERR_UNSPECIFIED:
+	default:
+		return BT_SECURITY_ERR_UNSPECIFIED;
+	}
 }
 
 static struct net_buf *smp_create_pdu(struct bt_conn *conn, u8_t op,
@@ -559,6 +597,39 @@ static u8_t get_encryption_key_size(struct bt_smp *smp)
 	return MIN(req->max_key_size, rsp->max_key_size);
 }
 
+/* Check that if a new pairing procedure with an existing bond will not lower
+ * the established security level of the bond.
+ */
+bool update_keys_check(struct bt_smp *smp)
+{
+	struct bt_conn *conn = smp->chan.chan.conn;
+
+	if (!conn->le.keys) {
+		conn->le.keys = bt_keys_get_addr(conn->id, &conn->le.dst);
+	}
+
+	if (!conn->le.keys ||
+	    !(conn->le.keys->keys & (BT_KEYS_LTK_P256 | BT_KEYS_LTK))) {
+		return true;
+	}
+
+	if (conn->le.keys->enc_size > get_encryption_key_size(smp)) {
+		return false;
+	}
+
+	if ((conn->le.keys->keys & BT_KEYS_LTK_P256) &&
+	    !atomic_test_bit(smp->flags, SMP_FLAG_SC)) {
+		return false;
+	}
+
+	if ((conn->le.keys->flags & BT_KEYS_AUTHENTICATED) &&
+	     smp->method == JUST_WORKS) {
+		return false;
+	}
+
+	return true;
+}
+
 #if defined(CONFIG_BT_PRIVACY) || defined(CONFIG_BT_SIGNING) || \
 	!defined(CONFIG_BT_SMP_SC_PAIR_ONLY)
 /* For TX callbacks */
@@ -756,7 +827,8 @@ static void smp_pairing_br_complete(struct bt_smp_br *smp, u8_t status)
 		}
 
 		if (bt_auth && bt_auth->pairing_failed) {
-			bt_auth->pairing_failed(smp->chan.chan.conn);
+			bt_auth->pairing_failed(smp->chan.chan.conn,
+						auth_err_get(status));
 		}
 	} else {
 		bool bond_flag = atomic_test_bit(smp->flags, SMP_FLAG_BOND);
@@ -1540,7 +1612,8 @@ static void smp_pairing_complete(struct bt_smp *smp, u8_t status)
 		 * TODO should we allow this if BR/EDR is already connected?
 		 */
 		if (atomic_test_bit(smp->flags, SMP_FLAG_DERIVE_LK) &&
-		    !atomic_test_bit(smp->flags, SMP_FLAG_SC_DEBUG_KEY)) {
+		    (!atomic_test_bit(smp->flags, SMP_FLAG_SC_DEBUG_KEY) ||
+		     IS_ENABLED(CONFIG_BT_STORE_DEBUG_KEYS))) {
 			sc_derive_link_key(smp);
 		}
 #endif /* CONFIG_BT_BREDR */
@@ -1554,8 +1627,16 @@ static void smp_pairing_complete(struct bt_smp *smp, u8_t status)
 			bt_auth->pairing_complete(smp->chan.chan.conn,
 						  bond_flag);
 		}
-	} else if (bt_auth && bt_auth->pairing_failed) {
-		bt_auth->pairing_failed(smp->chan.chan.conn);
+	} else {
+		u8_t auth_err = auth_err_get(status);
+
+		if (!atomic_test_bit(smp->flags, SMP_FLAG_KEYS_DISTR)) {
+			bt_conn_security_changed(smp->chan.chan.conn, auth_err);
+		}
+
+		if (bt_auth && bt_auth->pairing_failed) {
+			bt_auth->pairing_failed(smp->chan.chan.conn, auth_err);
+		}
 	}
 
 	smp_reset(smp);
@@ -2026,13 +2107,11 @@ static u8_t legacy_send_pairing_confirm(struct bt_smp *smp)
 }
 
 #if defined(CONFIG_BT_PERIPHERAL)
-static u8_t legacy_pairing_req(struct bt_smp *smp, u8_t remote_io)
+static u8_t legacy_pairing_req(struct bt_smp *smp)
 {
 	u8_t ret;
 
 	BT_DBG("");
-
-	smp->method = legacy_get_pair_method(smp, remote_io);
 
 	/* ask for consent if pairing is not due to sending SecReq*/
 	if ((DISPLAY_FIXED(smp) || smp->method == JUST_WORKS) &&
@@ -2232,13 +2311,11 @@ static u8_t smp_master_ident(struct bt_smp *smp, struct net_buf *buf)
 }
 
 #if defined(CONFIG_BT_CENTRAL)
-static u8_t legacy_pairing_rsp(struct bt_smp *smp, u8_t remote_io)
+static u8_t legacy_pairing_rsp(struct bt_smp *smp)
 {
 	u8_t ret;
 
 	BT_DBG("");
-
-	smp->method = legacy_get_pair_method(smp, remote_io);
 
 	/* ask for consent if this is due to received SecReq */
 	if ((DISPLAY_FIXED(smp) || smp->method == JUST_WORKS) &&
@@ -2391,6 +2468,13 @@ int bt_smp_send_security_req(struct bt_conn *conn)
 		return -EINVAL;
 	}
 
+	if (!conn->le.keys) {
+		conn->le.keys = bt_keys_get_addr(conn->id, &conn->le.dst);
+		if (!conn->le.keys) {
+			return -ENOMEM;
+		}
+	}
+
 	if (smp_init(smp) != 0) {
 		return -ENOBUFS;
 	}
@@ -2424,6 +2508,13 @@ static u8_t smp_pairing_req(struct bt_smp *smp, struct net_buf *buf)
 	if ((req->max_key_size > BT_SMP_MAX_ENC_KEY_SIZE) ||
 	    (req->max_key_size < BT_SMP_MIN_ENC_KEY_SIZE)) {
 		return BT_SMP_ERR_ENC_KEY_SIZE;
+	}
+
+	if (!conn->le.keys) {
+		conn->le.keys = bt_keys_get_addr(conn->id, &conn->le.dst);
+		if (!conn->le.keys) {
+			return BT_SMP_ERR_UNSPECIFIED;
+		}
 	}
 
 	/* If we already sent a security request then the SMP context
@@ -2476,15 +2567,19 @@ static u8_t smp_pairing_req(struct bt_smp *smp, struct net_buf *buf)
 
 	atomic_set_bit(smp->flags, SMP_FLAG_PAIRING);
 
+	smp->method = get_pair_method(smp, req->io_capability);
+
+	if (!update_keys_check(smp)) {
+		return BT_SMP_ERR_AUTH_REQUIREMENTS;
+	}
+
 	if (!atomic_test_bit(smp->flags, SMP_FLAG_SC)) {
 #if defined(CONFIG_BT_SMP_SC_PAIR_ONLY)
 		return BT_SMP_ERR_AUTH_REQUIREMENTS;
 #else
-		return legacy_pairing_req(smp, req->io_capability);
+		return legacy_pairing_req(smp);
 #endif /* CONFIG_BT_SMP_SC_PAIR_ONLY */
 	}
-
-	smp->method = get_pair_method(smp, req->io_capability);
 
 	if ((IS_ENABLED(CONFIG_BT_SMP_SC_ONLY) ||
 	     conn->required_sec_level == BT_SECURITY_FIPS) &&
@@ -2570,6 +2665,13 @@ int bt_smp_send_pairing_req(struct bt_conn *conn)
 		return -EINVAL;
 	}
 
+	if (!conn->le.keys) {
+		conn->le.keys = bt_keys_get_addr(conn->id, &conn->le.dst);
+		if (!conn->le.keys) {
+			return -ENOMEM;
+		}
+	}
+
 	if (smp_init(smp)) {
 		return -ENOBUFS;
 	}
@@ -2639,15 +2741,19 @@ static u8_t smp_pairing_rsp(struct bt_smp *smp, struct net_buf *buf)
 		atomic_set_bit(smp->flags, SMP_FLAG_BOND);
 	}
 
+	smp->method = get_pair_method(smp, rsp->io_capability);
+
+	if (!update_keys_check(smp)) {
+		return BT_SMP_ERR_AUTH_REQUIREMENTS;
+	}
+
 	if (!atomic_test_bit(smp->flags, SMP_FLAG_SC)) {
 #if defined(CONFIG_BT_SMP_SC_PAIR_ONLY)
 		return BT_SMP_ERR_AUTH_REQUIREMENTS;
 #else
-		return legacy_pairing_rsp(smp, rsp->io_capability);
+		return legacy_pairing_rsp(smp);
 #endif /* CONFIG_BT_SMP_SC_PAIR_ONLY */
 	}
-
-	smp->method = get_pair_method(smp, rsp->io_capability);
 
 	if ((IS_ENABLED(CONFIG_BT_SMP_SC_ONLY) ||
 	     conn->required_sec_level == BT_SECURITY_FIPS) &&
@@ -3497,6 +3603,14 @@ static u8_t smp_public_key(struct bt_smp *smp, struct net_buf *buf)
 	if (memcmp(smp->pkey, sc_debug_public_key, 64) == 0) {
 		BT_INFO("Remote is using Debug Public key");
 		atomic_set_bit(smp->flags, SMP_FLAG_SC_DEBUG_KEY);
+
+		/* Don't allow a bond established without debug key to be
+		 * updated using LTK generated from debug key.
+		 */
+		if (smp->chan.chan.conn->le.keys &&
+		    !(smp->chan.chan.conn->le.keys->flags & BT_KEYS_DEBUG)) {
+			return BT_SMP_ERR_AUTH_REQUIREMENTS;
+		}
 	}
 
 	if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
@@ -3795,7 +3909,8 @@ static void bt_smp_disconnected(struct bt_l2cap_chan *chan)
 		 * If debug keys were used for pairing remove them.
 		 * No keys indicate no bonding so free keys storage.
 		 */
-		if (!keys->keys || (keys->flags & BT_KEYS_DEBUG)) {
+		if (!keys->keys || (!IS_ENABLED(CONFIG_BT_STORE_DEBUG_KEYS) &&
+		    (keys->flags & BT_KEYS_DEBUG))) {
 			bt_keys_clear(keys);
 		}
 	}
@@ -4851,6 +4966,10 @@ bool bt_smp_get_tk(struct bt_conn *conn, u8_t *tk)
 
 bool bt_smp_keys_check(struct bt_conn *conn)
 {
+	if (atomic_test_bit(conn->flags, BT_CONN_FORCE_PAIR)) {
+		return false;
+	}
+
 	if (!conn->le.keys) {
 		conn->le.keys = bt_keys_find(BT_KEYS_LTK_P256,
 						     conn->id, &conn->le.dst);
@@ -4879,6 +4998,23 @@ bool bt_smp_keys_check(struct bt_conn *conn)
 	}
 
 	return true;
+}
+
+void bt_smp_keys_reject(struct bt_conn *conn)
+{
+	struct bt_smp *smp;
+
+	smp = smp_chan_get(conn);
+	if (!smp) {
+		return;
+	}
+
+	if (atomic_test_bit(smp->flags, SMP_FLAG_SEC_REQ)) {
+		bt_conn_security_changed(smp->chan.chan.conn,
+					 BT_SECURITY_ERR_PIN_OR_KEY_MISSING);
+	}
+
+	smp_reset(smp);
 }
 
 static int bt_smp_accept(struct bt_conn *conn, struct bt_l2cap_chan **chan)

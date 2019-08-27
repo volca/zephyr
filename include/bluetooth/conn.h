@@ -288,6 +288,10 @@ typedef enum __packed {
 	BT_SECURITY_HIGH,
 	/** Authenticated Secure Connections */
 	BT_SECURITY_FIPS,
+	/** Bit to force new pairing procedure, bit-wise OR with requested
+	 *  security level.
+	 */
+	BT_SECURITY_FORCE_PAIR = BIT(7),
 } bt_security_t;
 
 /** @brief Set security level for a connection.
@@ -303,7 +307,7 @@ typedef enum __packed {
  *
  *  This function may return error if required level of security is not possible
  *  to achieve due to local or remote device limitation (e.g., input output
- *  capabilities).
+ *  capabilities), or if the maximum number of paired devices has been reached.
  *
  *  @param conn Connection object.
  *  @param sec Requested security level.
@@ -322,6 +326,35 @@ int bt_conn_security(struct bt_conn *conn, bt_security_t sec);
  *  @return Encryption key size.
  */
 u8_t bt_conn_enc_key_size(struct bt_conn *conn);
+
+enum bt_security_err {
+	/** Security procedure successful. */
+	BT_SECURITY_ERR_SUCCESS,
+
+	/** Authentication failed. */
+	BT_SECURITY_ERR_AUTHENTICATION_FAIL,
+
+	/** PIN or encryption key is missing. */
+	BT_SECURITY_ERR_PIN_OR_KEY_MISSING,
+
+	/** OOB data is not available.  */
+	BT_SECURITY_ERR_OOB_NOT_AVAILABLE,
+
+	/** The requested security level could not be reached. */
+	BT_SECURITY_ERR_AUTHENTICATION_REQUIREMENT,
+
+	/** Pairing is not supported */
+	BT_SECURITY_ERR_PAIR_NOT_SUPPORTED,
+
+	/** Pairing is not allowed. */
+	BT_SECURITY_ERR_PAIR_NOT_ALLOWED,
+
+	/** Invalid parameters. */
+	BT_SECURITY_ERR_INVALID_PARAM,
+
+	/** Pairing failed but the exact reason could not be specified. */
+	BT_SECURITY_ERR_UNSPECIFIED,
+};
 
 /** @brief Connection callback structure.
  *
@@ -413,8 +446,10 @@ struct bt_conn_cb {
 	 *
 	 *  @param conn Connection object.
 	 *  @param level New security level of the connection.
+	 *  @param err Security error. Zero for success, non-zero otherwise.
 	 */
-	void (*security_changed)(struct bt_conn *conn, bt_security_t level);
+	void (*security_changed)(struct bt_conn *conn, bt_security_t level,
+				 enum bt_security_err err);
 #endif /* defined(CONFIG_BT_SMP) || defined(CONFIG_BT_BREDR) */
 	struct bt_conn_cb *_next;
 };
@@ -698,8 +733,10 @@ struct bt_conn_auth_cb {
 	/** @brief notify that pairing process has failed.
 	 *
 	 * @param conn Connection object.
+	 * @param reason Pairing failed reason
 	 */
-	void (*pairing_failed)(struct bt_conn *conn);
+	void (*pairing_failed)(struct bt_conn *conn,
+			       enum bt_security_err reason);
 };
 
 /** @brief Register authentication callbacks.
