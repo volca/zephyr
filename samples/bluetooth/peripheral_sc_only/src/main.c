@@ -37,7 +37,7 @@ static void connected(struct bt_conn *conn, u8_t err)
 
 	printk("Connected %s\n", addr);
 
-	if (bt_conn_security(conn, BT_SECURITY_FIPS)) {
+	if (bt_conn_set_security(conn, BT_SECURITY_L4)) {
 		printk("Failed to set security\n");
 	}
 }
@@ -110,7 +110,7 @@ static void pairing_complete(struct bt_conn *conn, bool bonded)
 static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 {
 	printk("Pairing Failed (%d). Disconnecting.\n", reason);
-	bt_conn_disconnect(conn, BT_HCI_ERR_AUTHENTICATION_FAIL);
+	bt_conn_disconnect(conn, BT_HCI_ERR_AUTH_FAIL);
 }
 
 static struct bt_conn_auth_cb auth_cb_display = {

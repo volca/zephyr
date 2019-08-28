@@ -278,16 +278,23 @@ struct bt_conn *bt_conn_create_slave_le(const bt_addr_le_t *peer,
 
 /** Security level. */
 typedef enum __packed {
-	/** Only for BR/EDR special cases, like SDP */
-	BT_SECURITY_NONE,
-	/** No encryption and no authentication. */
-	BT_SECURITY_LOW,
-	/** Encryption and no authentication (no MITM). */
-	BT_SECURITY_MEDIUM,
-	/** Encryption and authentication (MITM). */
-	BT_SECURITY_HIGH,
-	/** Authenticated Secure Connections */
-	BT_SECURITY_FIPS,
+	/** Level 0: Only for BR/EDR special cases, like SDP */
+	BT_SECURITY_L0,
+	/** Level 1: No encryption and no authentication. */
+	BT_SECURITY_L1,
+	/** Level 2: Encryption and no authentication (no MITM). */
+	BT_SECURITY_L2,
+	/** Level 3: Encryption and authentication (MITM). */
+	BT_SECURITY_L3,
+	/** Level 4: Authenticated Secure Connections and 128-bit key. */
+	BT_SECURITY_L4,
+
+	BT_SECURITY_NONE   __deprecated = BT_SECURITY_L0,
+	BT_SECURITY_LOW    __deprecated = BT_SECURITY_L1,
+	BT_SECURITY_MEDIUM __deprecated = BT_SECURITY_L2,
+	BT_SECURITY_HIGH   __deprecated = BT_SECURITY_L3,
+	BT_SECURITY_FIPS   __deprecated = BT_SECURITY_L4,
+
 	/** Bit to force new pairing procedure, bit-wise OR with requested
 	 *  security level.
 	 */
@@ -314,7 +321,13 @@ typedef enum __packed {
  *
  *  @return 0 on success or negative error
  */
-int bt_conn_security(struct bt_conn *conn, bt_security_t sec);
+int bt_conn_set_security(struct bt_conn *conn, bt_security_t sec);
+
+static inline int __deprecated bt_conn_security(struct bt_conn *conn,
+						bt_security_t sec)
+{
+	return bt_conn_set_security(conn, sec);
+}
 
 /** @brief Get encryption key size.
  *
@@ -332,7 +345,7 @@ enum bt_security_err {
 	BT_SECURITY_ERR_SUCCESS,
 
 	/** Authentication failed. */
-	BT_SECURITY_ERR_AUTHENTICATION_FAIL,
+	BT_SECURITY_ERR_AUTH_FAIL,
 
 	/** PIN or encryption key is missing. */
 	BT_SECURITY_ERR_PIN_OR_KEY_MISSING,
@@ -341,7 +354,7 @@ enum bt_security_err {
 	BT_SECURITY_ERR_OOB_NOT_AVAILABLE,
 
 	/** The requested security level could not be reached. */
-	BT_SECURITY_ERR_AUTHENTICATION_REQUIREMENT,
+	BT_SECURITY_ERR_AUTH_REQUIREMENT,
 
 	/** Pairing is not supported */
 	BT_SECURITY_ERR_PAIR_NOT_SUPPORTED,

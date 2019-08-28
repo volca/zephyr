@@ -347,12 +347,12 @@ static enum bt_security_err auth_err_get(u8_t smp_err)
 	case BT_SMP_ERR_DHKEY_CHECK_FAILED:
 	case BT_SMP_ERR_NUMERIC_COMP_FAILED:
 	case BT_SMP_ERR_CONFIRM_FAILED:
-		return BT_SECURITY_ERR_AUTHENTICATION_FAIL;
+		return BT_SECURITY_ERR_AUTH_FAIL;
 	case BT_SMP_ERR_OOB_NOT_AVAIL:
 		return BT_SECURITY_ERR_OOB_NOT_AVAILABLE;
 	case BT_SMP_ERR_AUTH_REQUIREMENTS:
 	case BT_SMP_ERR_ENC_KEY_SIZE:
-		return BT_SECURITY_ERR_AUTHENTICATION_REQUIREMENT;
+		return BT_SECURITY_ERR_AUTH_REQUIREMENT;
 	case BT_SMP_ERR_PAIRING_NOTSUPP:
 	case BT_SMP_ERR_CMD_NOTSUPP:
 		return BT_SECURITY_ERR_PAIR_NOT_SUPPORTED;
@@ -2393,7 +2393,7 @@ static u8_t get_auth(struct bt_conn *conn, u8_t auth)
 
 	if ((get_io_capa() == BT_SMP_IO_NO_INPUT_OUTPUT) ||
 	    (!IS_ENABLED(CONFIG_BT_SMP_ENFORCE_MITM) &&
-	    (conn->required_sec_level < BT_SECURITY_HIGH))) {
+	    (conn->required_sec_level < BT_SECURITY_L3))) {
 		auth &= ~(BT_SMP_AUTH_MITM);
 	} else {
 		auth |= BT_SMP_AUTH_MITM;
@@ -2411,13 +2411,13 @@ static u8_t get_auth(struct bt_conn *conn, u8_t auth)
 static bool sec_level_reachable(struct bt_conn *conn)
 {
 	switch (conn->required_sec_level) {
-	case BT_SECURITY_LOW:
-	case BT_SECURITY_MEDIUM:
+	case BT_SECURITY_L1:
+	case BT_SECURITY_L2:
 		return true;
-	case BT_SECURITY_HIGH:
+	case BT_SECURITY_L3:
 		return get_io_capa() != BT_SMP_IO_NO_INPUT_OUTPUT ||
 		       (bt_auth && bt_auth->oob_data_request && oobd_present);
-	case BT_SECURITY_FIPS:
+	case BT_SECURITY_L4:
 		return (get_io_capa() != BT_SMP_IO_NO_INPUT_OUTPUT ||
 			(bt_auth && bt_auth->oob_data_request &&
 			 oobd_present)) &&
@@ -2582,13 +2582,13 @@ static u8_t smp_pairing_req(struct bt_smp *smp, struct net_buf *buf)
 	}
 
 	if ((IS_ENABLED(CONFIG_BT_SMP_SC_ONLY) ||
-	     conn->required_sec_level == BT_SECURITY_FIPS) &&
+	     conn->required_sec_level == BT_SECURITY_L4) &&
 		smp->method == JUST_WORKS) {
 		return BT_SMP_ERR_AUTH_REQUIREMENTS;
 	}
 
 	if ((IS_ENABLED(CONFIG_BT_SMP_SC_ONLY) ||
-	     conn->required_sec_level == BT_SECURITY_FIPS) &&
+	     conn->required_sec_level == BT_SECURITY_L4) &&
 	       get_encryption_key_size(smp) != BT_SMP_MAX_ENC_KEY_SIZE) {
 		return BT_SMP_ERR_ENC_KEY_SIZE;
 	}
@@ -2756,13 +2756,13 @@ static u8_t smp_pairing_rsp(struct bt_smp *smp, struct net_buf *buf)
 	}
 
 	if ((IS_ENABLED(CONFIG_BT_SMP_SC_ONLY) ||
-	     conn->required_sec_level == BT_SECURITY_FIPS) &&
+	     conn->required_sec_level == BT_SECURITY_L4) &&
 	     smp->method == JUST_WORKS) {
 		return BT_SMP_ERR_AUTH_REQUIREMENTS;
 	}
 
 	if ((IS_ENABLED(CONFIG_BT_SMP_SC_ONLY) ||
-	     conn->required_sec_level == BT_SECURITY_FIPS) &&
+	     conn->required_sec_level == BT_SECURITY_L4) &&
 	     get_encryption_key_size(smp) != BT_SMP_MAX_ENC_KEY_SIZE) {
 		return BT_SMP_ERR_ENC_KEY_SIZE;
 	}
@@ -4985,12 +4985,12 @@ bool bt_smp_keys_check(struct bt_conn *conn)
 		return false;
 	}
 
-	if (conn->required_sec_level > BT_SECURITY_MEDIUM &&
+	if (conn->required_sec_level > BT_SECURITY_L2 &&
 	    !(conn->le.keys->flags & BT_KEYS_AUTHENTICATED)) {
 		return false;
 	}
 
-	if (conn->required_sec_level > BT_SECURITY_HIGH &&
+	if (conn->required_sec_level > BT_SECURITY_L3 &&
 	    !(conn->le.keys->flags & BT_KEYS_AUTHENTICATED) &&
 	    !(conn->le.keys->keys & BT_KEYS_LTK_P256) &&
 	    !(conn->le.keys->enc_size == BT_SMP_MAX_ENC_KEY_SIZE)) {

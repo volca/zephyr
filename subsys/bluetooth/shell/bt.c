@@ -1076,13 +1076,13 @@ static int cmd_security(const struct shell *shell, size_t argc, char *argv[])
 	sec = *argv[1] - '0';
 
 	if ((info.type == BT_CONN_TYPE_BR &&
-	    (sec < BT_SECURITY_NONE || sec > BT_SECURITY_HIGH))) {
+	    (sec < BT_SECURITY_L0 || sec > BT_SECURITY_L3))) {
 		shell_error(shell, "Invalid BR/EDR security level (%d)", sec);
 		return -ENOEXEC;
 	}
 
 	if ((info.type == BT_CONN_TYPE_LE &&
-	    (sec < BT_SECURITY_LOW || sec > BT_SECURITY_FIPS))) {
+	    (sec < BT_SECURITY_L1 || sec > BT_SECURITY_L4))) {
 		shell_error(shell, "Invalid LE security level (%d)", sec);
 		return -ENOEXEC;
 	}
@@ -1096,7 +1096,7 @@ static int cmd_security(const struct shell *shell, size_t argc, char *argv[])
 		}
 	}
 
-	err = bt_conn_security(default_conn, sec);
+	err = bt_conn_set_security(default_conn, sec);
 	if (err) {
 		shell_error(shell, "Setting security failed (err %d)", err);
 	}
