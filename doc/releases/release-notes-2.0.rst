@@ -28,6 +28,13 @@ Kernel
 
 * New kernel API for per-thread disabling of Floating Point Services for
   ARC, ARM Cortex-M, and x86 architectures.
+* New system call to set the clock frequency at runtime.
+* Additional support for compatibility with 64-bit architectures.
+* Userspace mutexes are now supported through the new k_futex primitive.
+* Improvements to the slab allocator.
+* Fixed the implementation of k_thread_name_set() with userspace enabled.
+* Boost the default tick rate for tickless kernels in order to improve the
+  precision of timeouts.
 
 Architectures
 *************
@@ -46,11 +53,25 @@ Architectures
   * Improved support for linking TrustZone Secure Entry functions into
     Non-Secure firmware
 
+* ARC:
+
+  * Added support for ARC HS architecture
+  * Added SMP support for ARC HS architecture
+  * Added support for ARC SecureShield based TEE (EXPERIMENTAL)
+  * Fixed several critical bugs in interrupt and exception handling
+  * Enhance the support for Floating Point Services
 
 * POSIX:
 
   * Fix race condition with terminated threads which had never been
     scheduled by kernel. On very loaded systems it could cause swap errors.
+
+* x86:
+
+  * Support for the Quark microcontroller family has been dropped.
+  * A new lightweight PCI implementation has been introduced which supports
+    MSI and other features required for PCIe devices. The previous PCI
+    implementation has been deprecated and will be removed in 2.1.
 
 Boards & SoC Support
 ********************
@@ -59,8 +80,9 @@ Boards & SoC Support
 
 * Added support for the following ARC boards:
 
-  * emdsp
+  * emsdp
   * hsdk
+  * nsim for hs
 
 * Added support for the following ARM boards:
 
@@ -389,7 +411,7 @@ Bluetooth
   * Added support for out-of-tree user-defined commands and events
   * Added support for Zephyr Vendor Specific Commands
   * Added support for user-defined protocols
-  * Converted several control procedures to be queuable
+  * Converted several control procedures to be queueable
   * Nordic: Added support for Controller-based privacy
   * Nordic: Decorrelated address generation from resolution
   * Nordic: Added support for fast encryption setup
@@ -408,6 +430,10 @@ Bluetooth
 
 Build and Infrastructure
 ************************
+
+* ARM Embedded Toolchain
+
+  * Changed ARM Embedded toolchain to default to nano variant of newlib
 
 * TBD
 
@@ -428,7 +454,10 @@ HALs
 Documentation
 *************
 
-* TBD
+* We've made many updates to component, subsystem, and process
+  documentation bringing our documentation up-to-date with code changes,
+  additions, and improvements, as well as new supported boards and
+  samples.
 
 Tests and Samples
 *****************

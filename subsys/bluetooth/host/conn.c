@@ -1198,6 +1198,17 @@ int bt_conn_send_cb(struct bt_conn *conn, struct net_buf *buf,
 static bool conn_tx_internal(bt_conn_tx_cb_t cb)
 {
 	if (cb == att_pdu_sent || cb == att_cfm_sent || cb == att_rsp_sent ||
+#if defined(CONFIG_BT_SMP)
+#if defined(CONFIG_BT_PRIVACY)
+	    cb == smp_id_sent ||
+#endif /* CONFIG_BT_PRIVACY */
+#if defined(CONFIG_BT_SIGNING)
+	    cb == smp_sign_info_sent ||
+#endif /* CONFIG_BT_SIGNING */
+#if !defined(CONFIG_BT_SMP_SC_PAIR_ONLY)
+	    cb == smp_ident_sent ||
+#endif /* CONFIG_BT_SMP_SC_PAIR_ONLY */
+#endif /* CONFIG_BT_SMP */
 #if defined(CONFIG_BT_L2CAP_DYNAMIC_CHANNEL)
 	    cb == l2cap_chan_sdu_sent ||
 #endif /* CONFIG_BT_L2CAP_DYNAMIC_CHANNEL */
@@ -2312,7 +2323,8 @@ int bt_conn_le_conn_update(struct bt_conn *conn,
 	return bt_hci_cmd_send(BT_HCI_OP_LE_CONN_UPDATE, buf);
 }
 
-struct net_buf *bt_conn_create_pdu(struct net_buf_pool *pool, size_t reserve)
+struct net_buf *bt_conn_create_pdu_timeout(struct net_buf_pool *pool,
+					   size_t reserve, s32_t timeout)
 {
 	struct net_buf *buf;
 
@@ -2327,24 +2339,29 @@ struct net_buf *bt_conn_create_pdu(struct net_buf_pool *pool, size_t reserve)
 	}
 
 	if (IS_ENABLED(CONFIG_BT_DEBUG_CONN) ||
-	    k_current_get() == &k_sys_work_q.thread) {
+	    (k_current_get() == &k_sys_work_q.thread && timeout == K_FOREVER)) {
 		buf = net_buf_alloc(pool, K_NO_WAIT);
 		if (!buf) {
-			BT_WARN("Unable to allocate buffer");
+			BT_WARN("Unable to allocate buffer with K_NO_WAIT");
 			/* Cannot block with K_FOREVER on k_sys_work_q as that
 			 * can cause a deadlock when trying to dispatch TX
 			 * notification.
 			 */
 			if (k_current_get() == &k_sys_work_q.thread) {
+				BT_WARN("Unable to allocate buffer: timeout %d",
+					 timeout);
 				return NULL;
 			}
-			buf = net_buf_alloc(pool, K_FOREVER);
+			buf = net_buf_alloc(pool, timeout);
 		}
 	} else {
-		buf = net_buf_alloc(pool, K_FOREVER);
+		buf = net_buf_alloc(pool, timeout);
 	}
 
-	__ASSERT_NO_MSG(buf);
+	if (!buf) {
+		BT_WARN("Unable to allocate buffer: timeout %d", timeout);
+		return NULL;
+	}
 
 	reserve += sizeof(struct bt_hci_acl_hdr) + CONFIG_BT_HCI_RESERVE;
 	net_buf_reserve(buf, reserve);

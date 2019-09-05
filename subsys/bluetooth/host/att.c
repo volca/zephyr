@@ -615,8 +615,7 @@ static u8_t find_type_cb(const struct bt_gatt_attr *attr, void *user_data)
 		struct bt_uuid_128 ref_uuid;
 		struct bt_uuid_128 recvd_uuid;
 
-		if (!bt_uuid_create_le(&recvd_uuid.uuid, data->value,
-				       data->value_len)) {
+		if (!bt_uuid_create(&recvd_uuid.uuid, data->value, data->value_len)) {
 			BT_WARN("Unable to create UUID: size %u", data->value_len);
 			goto skip;
 		}
@@ -904,7 +903,7 @@ static u8_t att_read_type_req(struct bt_att *att, struct net_buf *buf)
 
 	start_handle = sys_le16_to_cpu(req->start_handle);
 	end_handle = sys_le16_to_cpu(req->end_handle);
-	if (!bt_uuid_create_le(&u.uuid, req->uuid, uuid_len)) {
+	if (!bt_uuid_create(&u.uuid, req->uuid, uuid_len)) {
 		return BT_ATT_ERR_UNLIKELY;
 	}
 
@@ -1211,7 +1210,7 @@ static u8_t att_read_group_req(struct bt_att *att, struct net_buf *buf)
 	start_handle = sys_le16_to_cpu(req->start_handle);
 	end_handle = sys_le16_to_cpu(req->end_handle);
 
-	if (!bt_uuid_create_le(&u.uuid, req->uuid, uuid_len)) {
+	if (!bt_uuid_create(&u.uuid, req->uuid, uuid_len)) {
 		return BT_ATT_ERR_UNLIKELY;
 	}
 
@@ -1929,17 +1928,41 @@ static const struct att_handler {
 
 static att_type_t att_op_get_type(u8_t op)
 {
-	const struct att_handler *handler;
-	int i;
-
-	for (i = 0, handler = NULL; i < ARRAY_SIZE(handlers); i++) {
-		if (op == handlers[i].op) {
-			return handlers[i].type;
-		}
-	}
-
-	if (op & ATT_CMD_MASK) {
+	switch (op) {
+	case BT_ATT_OP_MTU_REQ:
+	case BT_ATT_OP_FIND_INFO_REQ:
+	case BT_ATT_OP_FIND_TYPE_REQ:
+	case BT_ATT_OP_READ_TYPE_REQ:
+	case BT_ATT_OP_READ_REQ:
+	case BT_ATT_OP_READ_BLOB_REQ:
+	case BT_ATT_OP_READ_MULT_REQ:
+	case BT_ATT_OP_READ_GROUP_REQ:
+	case BT_ATT_OP_WRITE_REQ:
+	case BT_ATT_OP_PREPARE_WRITE_REQ:
+	case BT_ATT_OP_EXEC_WRITE_REQ:
+		return ATT_REQUEST;
+	case BT_ATT_OP_CONFIRM:
+		return ATT_CONFIRMATION;
+	case BT_ATT_OP_WRITE_CMD:
+	case BT_ATT_OP_SIGNED_WRITE_CMD:
 		return ATT_COMMAND;
+	case BT_ATT_OP_ERROR_RSP:
+	case BT_ATT_OP_MTU_RSP:
+	case BT_ATT_OP_FIND_INFO_RSP:
+	case BT_ATT_OP_FIND_TYPE_RSP:
+	case BT_ATT_OP_READ_TYPE_RSP:
+	case BT_ATT_OP_READ_RSP:
+	case BT_ATT_OP_READ_BLOB_RSP:
+	case BT_ATT_OP_READ_MULT_RSP:
+	case BT_ATT_OP_READ_GROUP_RSP:
+	case BT_ATT_OP_WRITE_RSP:
+	case BT_ATT_OP_PREPARE_WRITE_RSP:
+	case BT_ATT_OP_EXEC_WRITE_RSP:
+		return ATT_RESPONSE;
+	case BT_ATT_OP_NOTIFY:
+		return ATT_NOTIFICATION;
+	case BT_ATT_OP_INDICATE:
+		return ATT_INDICATION;
 	}
 
 	return ATT_UNKNOWN;
@@ -1969,7 +1992,7 @@ static int bt_att_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 	}
 
 	if (!handler) {
-		BT_WARN("Unknown ATT code 0x%02x", hdr->code);
+		BT_WARN("Unhandled ATT code 0x%02x", hdr->code);
 		if (att_op_get_type(hdr->code) != ATT_COMMAND) {
 			send_err_rsp(chan->conn, hdr->code, 0,
 				     BT_ATT_ERR_NOT_SUPPORTED);
@@ -2047,8 +2070,18 @@ struct net_buf *bt_att_create_pdu(struct bt_conn *conn, u8_t op, size_t len)
 		return NULL;
 	}
 
-	buf = bt_l2cap_create_pdu(NULL, 0);
+	switch (att_op_get_type(op)) {
+	case ATT_RESPONSE:
+	case ATT_CONFIRMATION:
+		/* Use a timeout only when responding/confirming */
+		buf = bt_l2cap_create_pdu_timeout(NULL, 0, ATT_TIMEOUT);
+		break;
+	default:
+		buf = bt_l2cap_create_pdu(NULL, 0);
+	}
+
 	if (!buf) {
+		BT_ERR("Unable to allocate buffer for op 0x%02x", op);
 		return NULL;
 	}
 

@@ -77,7 +77,7 @@ manifest:
       revision: 6e3316da412649f02d133231078427e452f65db6
       path: modules/lib/gui/lvgl
     - name: mbedtls
-      revision: ca32746072ce3381f1c9ae46ba6cd34c69f8c0ee
+      revision: 4bba3b845453033b7ac9ecabb6cf694d8c1381a1
       path: modules/crypto/mbedtls
     - name: mcumgr
       revision: 84934959d2d1722a23b7e7e200191ae4a6f96168
@@ -89,7 +89,7 @@ manifest:
       revision: bc62a2fa9d98ddb5d633c932ea199bc68e10f194
       path: modules/fs/nffs
     - name: hal_nxp
-      revision: f55f52e57de4280e38f20b8182b752ea27241645
+      revision: 5852d8f66e454f66f0a8484a9f2309f392a78026
       path: modules/hal/nxp
     - name: open-amp
       revision: 9b591b289e1f37339bd038b5a1f0e6c8ad39c63a
