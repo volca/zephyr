@@ -161,7 +161,6 @@ class ZephyrAppCommandsDirective(Directive):
         in_tree = self.IN_TREE_STR if zephyr_app else None
         # Allow build directories which are nested.
         build_dir = ('build' + '/' + build_dir_append).rstrip('/')
-        num_slashes = build_dir.count('/')
 
         # Create host_os array
         host_os = [host_os] if host_os != "all" else [v for v in self.HOST_OS
@@ -207,7 +206,7 @@ class ZephyrAppCommandsDirective(Directive):
             if tool_comment:
                 paragraph = nodes.paragraph()
                 paragraph += nodes.Text(tool_comment.format(
-                                    'CMake and {}'.format( generator)))
+                    'CMake and {}'.format(generator)))
                 content.append(paragraph)
                 content.append(self._lit_block(c))
             else:
@@ -271,7 +270,7 @@ class ZephyrAppCommandsDirective(Directive):
             content.append('west sign{}'.format(dst))
 
         for goal in goals:
-            if goal == 'build' or goal == 'sign':
+            if goal in {'build', 'sign'}:
                 continue
             elif goal == 'flash':
                 content.append('west flash{}'.format(dst))
@@ -286,7 +285,8 @@ class ZephyrAppCommandsDirective(Directive):
 
         return content
 
-    def _mkdir(self, mkdir, build_dir, host_os, skip_config):
+    @staticmethod
+    def _mkdir(mkdir, build_dir, host_os, skip_config):
         content = []
         if skip_config:
             content.append("# If you already made a build directory ({}) and ran cmake, just 'cd {}' instead.".format(build_dir, build_dir))  # noqa: E501
@@ -295,12 +295,12 @@ class ZephyrAppCommandsDirective(Directive):
         if host_os == "unix":
             content.append('{} {} && cd {}'.format(mkdir, build_dir, build_dir))
         elif host_os == "win":
-            build_dir = build_dir.replace('/','\\')
+            build_dir = build_dir.replace('/', '\\')
             content.append('mkdir {} & cd {}'.format(build_dir, build_dir))
         return content
 
-    def _cmake_args(self, **kwargs):
-        generator = kwargs['generator']
+    @staticmethod
+    def _cmake_args(**kwargs):
         board = kwargs['board']
         shield = kwargs['shield']
         conf = kwargs['conf']
@@ -351,11 +351,9 @@ class ZephyrAppCommandsDirective(Directive):
 
     def _generate_cmake(self, **kwargs):
         generator = kwargs['generator']
-        host_os = kwargs['host_os']
         cd_into = kwargs['cd_into']
         app = kwargs['app']
         in_tree = kwargs['in_tree']
-        host_os = kwargs['host_os']
         build_dir = kwargs['build_dir']
         build_args = kwargs['build_args']
         skip_config = kwargs['skip_config']

@@ -616,7 +616,7 @@ static u8_t get_encryption_key_size(struct bt_smp *smp)
 /* Check that if a new pairing procedure with an existing bond will not lower
  * the established security level of the bond.
  */
-bool update_keys_check(struct bt_smp *smp)
+static bool update_keys_check(struct bt_smp *smp)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
 
@@ -640,6 +640,26 @@ bool update_keys_check(struct bt_smp *smp)
 
 	if ((conn->le.keys->flags & BT_KEYS_AUTHENTICATED) &&
 	     smp->method == JUST_WORKS) {
+		return false;
+	}
+
+	return true;
+}
+
+static bool update_debug_keys_check(struct bt_smp *smp)
+{
+	struct bt_conn *conn = smp->chan.chan.conn;
+
+	if (!conn->le.keys) {
+		conn->le.keys = bt_keys_get_addr(conn->id, &conn->le.dst);
+	}
+
+	if (!conn->le.keys ||
+	    !(conn->le.keys->keys & (BT_KEYS_LTK_P256 | BT_KEYS_LTK))) {
+		return true;
+	}
+
+	if (conn->le.keys->flags & BT_KEYS_DEBUG) {
 		return false;
 	}
 
@@ -3667,8 +3687,7 @@ static u8_t smp_public_key(struct bt_smp *smp, struct net_buf *buf)
 		/* Don't allow a bond established without debug key to be
 		 * updated using LTK generated from debug key.
 		 */
-		if (smp->chan.chan.conn->le.keys &&
-		    !(smp->chan.chan.conn->le.keys->flags & BT_KEYS_DEBUG)) {
+		if (!update_debug_keys_check(smp)) {
 			return BT_SMP_ERR_AUTH_REQUIREMENTS;
 		}
 	}
