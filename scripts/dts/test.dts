@@ -300,15 +300,22 @@
 		phandle-ref = < &{/props/node} >;
 		phandle-refs = < &{/props/node} &{/props/node2} >;
 		phandle-refs-and-vals = < &{/props/node} 1 &{/props/node2} 2 >;
-		// Does not appear in the binding, so won't create an entry in
-		// Device.props
-		not-speced = <0>;
 
 		node {
 		};
 
 		node2 {
 		};
+	};
+
+	//
+	// For testing Device.props with 'default:' values in binding
+	//
+
+	defaults {
+		compatible = "defaults";
+		// Should override the 'default:' in the binding
+		default-not-used = <234>;
 	};
 
 	//
@@ -320,7 +327,6 @@
 		node {
 			foo = <1>;
 			bar = <2>;
-			not-speced = <0>;
 		};
 	};
 

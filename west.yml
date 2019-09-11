@@ -50,7 +50,7 @@ manifest:
       revision: a12d92816a53a521d79cefcf5c38b9dc8a4fed6e
       path: modules/hal/cypress
     - name: hal_nordic
-      revision: 7bf2d404d0bf7f36d77d5090b5207f8b4676776c
+      revision: ff3265342f2ef97b5abf4ba7d38b8011a45360f3
       path: modules/hal/nordic
     - name: hal_openisa
       revision: be5c01f86c96500def5079bcc58d2baefdffb6c8
@@ -74,7 +74,7 @@ manifest:
       revision: 45e630d6152824f807d3f919958605c4626cbdff
       path: modules/hal/libmetal
     - name: lvgl
-      revision: 6e3316da412649f02d133231078427e452f65db6
+      revision: d4708d0a432e95f51bdc712591ba5295b751140c
       path: modules/lib/gui/lvgl
     - name: mbedtls
       revision: 4bba3b845453033b7ac9ecabb6cf694d8c1381a1
@@ -89,7 +89,7 @@ manifest:
       revision: bc62a2fa9d98ddb5d633c932ea199bc68e10f194
       path: modules/fs/nffs
     - name: hal_nxp
-      revision: 5852d8f66e454f66f0a8484a9f2309f392a78026
+      revision: 81d50b7d15340dfa034bfff9c98527f5b661b84e
       path: modules/hal/nxp
     - name: open-amp
       revision: 9b591b289e1f37339bd038b5a1f0e6c8ad39c63a
