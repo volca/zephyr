@@ -1,17 +1,13 @@
-# Kconfig - SPI driver configuration options
+# SPI driver configuration options
 
-#
 # Copyright (c) 2015-2016 Intel Corporation
-#
 # SPDX-License-Identifier: Apache-2.0
-#
 
 #
 # SPI Drivers
 #
 menuconfig SPI
 	bool "SPI hardware bus support"
-	select HAS_DTS_SPI
 	help
 	  Enable support for the SPI hardware bus.
 
@@ -40,7 +36,7 @@ module-str = spi
 source "subsys/logging/Kconfig.template.log_config"
 
 
-config	SPI_0
+config SPI_0
 	bool "SPI port 0"
 	help
 	  Enable SPI controller port 0.
@@ -188,6 +184,8 @@ source "drivers/spi/Kconfig.mcux_dspi"
 
 source "drivers/spi/Kconfig.mcux_lpspi"
 
+source "drivers/spi/Kconfig.rv32m1_lpspi"
+
 source "drivers/spi/Kconfig.sam"
 
 source "drivers/spi/Kconfig.sam0"
@@ -197,5 +195,11 @@ source "drivers/spi/Kconfig.sifive"
 source "drivers/spi/Kconfig.nrfx"
 
 source "drivers/spi/Kconfig.cc13xx_cc26xx"
+
+source "drivers/spi/Kconfig.litex"
+
+source "drivers/spi/Kconfig.oc_simple"
+
+source "drivers/spi/Kconfig.xec_qmspi"
 
 endif # SPI

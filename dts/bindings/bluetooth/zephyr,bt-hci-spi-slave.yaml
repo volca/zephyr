@@ -3,7 +3,7 @@
 
 title: Bluetooth controller that provides Host Controller Interface over SPI
 
-description: >
+description: |
     This binding gives the base representation of a bluetooth controller node
     that provides HCI over SPI.
 
@@ -11,8 +11,7 @@ compatible: "zephyr,bt-hci-spi-slave"
 
 include: base.yaml
 
-parent:
-    bus: spi
+parent-bus: spi
 
 properties:
     irq-gpios:

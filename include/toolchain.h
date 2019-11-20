@@ -38,6 +38,9 @@
 #elif defined(__GNUC__) || (defined(_LINKER) && defined(__GCC_LINKER_CMD__))
 #include <toolchain/gcc.h>
 #else
+/* This include line exists for off-tree definitions of compilers,
+ * and therefore this header is not meant to exist in-tree
+ */
 #include <toolchain/other.h>
 #endif
 

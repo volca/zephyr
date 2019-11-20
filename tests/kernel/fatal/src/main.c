@@ -71,7 +71,7 @@ void alt_thread1(void)
 {
 	expected_reason = K_ERR_CPU_EXCEPTION;
 
-#if defined(CONFIG_X86) || defined(CONFIG_X86_64)
+#if defined(CONFIG_X86)
 	__asm__ volatile ("ud2");
 #elif defined(CONFIG_NIOS2)
 	__asm__ volatile ("trap");
@@ -124,6 +124,19 @@ void alt_thread4(void)
 	rv = TC_FAIL;
 }
 
+void alt_thread5(void)
+{
+	unsigned int key;
+
+	expected_reason = INT_MAX;
+
+	key = irq_lock();
+	z_except_reason(INT_MAX);
+	TC_ERROR("SHOULD NEVER SEE THIS\n");
+	rv = TC_FAIL;
+	irq_unlock(key);
+}
+
 #ifndef CONFIG_ARCH_POSIX
 #ifdef CONFIG_STACK_SENTINEL
 void blow_up_stack(void)
@@ -156,7 +169,11 @@ void z_impl_blow_up_priv_stack(void)
 	blow_up_stack();
 }
 
-Z_SYSCALL_HANDLER0_SIMPLE_VOID(blow_up_priv_stack);
+static inline void z_vrfy_blow_up_priv_stack(void)
+{
+	z_impl_blow_up_priv_stack();
+}
+#include <syscalls/blow_up_priv_stack_mrsh.c>
 
 #endif /* CONFIG_USERSPACE */
 #endif /* CONFIG_STACK_SENTINEL */
@@ -167,11 +184,11 @@ void stack_sentinel_timer(void)
 	 * k_timer and spin until we die.  Spinning alone won't work
 	 * on a tickless kernel.
 	 */
-	struct k_timer timer;
+	static struct k_timer timer;
 
 	blow_up_stack();
 	k_timer_init(&timer, NULL, NULL);
-	k_timer_start(&timer, 1, 0);
+	k_timer_start(&timer, K_MSEC(1), K_NO_WAIT);
 	while (true) {
 	}
 }
@@ -293,6 +310,14 @@ void test_fatal(void)
 	k_thread_abort(&alt_thread);
 	zassert_not_equal(rv, TC_FAIL, "thread was not aborted");
 
+	TC_PRINT("test alt thread 5: initiate arbitrary SW exception\n");
+	k_thread_create(&alt_thread, alt_stack,
+			K_THREAD_STACK_SIZEOF(alt_stack),
+			(k_thread_entry_t)alt_thread5,
+			NULL, NULL, NULL, K_PRIO_COOP(PRIORITY), 0,
+			K_NO_WAIT);
+	k_thread_abort(&alt_thread);
+	zassert_not_equal(rv, TC_FAIL, "thread was not aborted");
 
 #ifndef CONFIG_ARCH_POSIX
 

@@ -534,7 +534,6 @@ static void le_conn_param_rsp(struct bt_l2cap *l2cap, struct net_buf *buf)
 	BT_DBG("LE conn param rsp result %u", sys_le16_to_cpu(rsp->result));
 }
 
-#if defined(CONFIG_BT_CENTRAL)
 static void le_conn_param_update_req(struct bt_l2cap *l2cap, u8_t ident,
 				     struct net_buf *buf)
 {
@@ -585,7 +584,6 @@ static void le_conn_param_update_req(struct bt_l2cap *l2cap, u8_t ident,
 		bt_conn_le_conn_update(conn, &param);
 	}
 }
-#endif /* CONFIG_BT_CENTRAL */
 
 struct bt_l2cap_chan *bt_l2cap_le_lookup_tx_cid(struct bt_conn *conn,
 						u16_t cid)
@@ -1138,6 +1136,9 @@ static struct net_buf *l2cap_chan_create_seg(struct bt_l2cap_le_chan *ch,
 
 segment:
 	seg = l2cap_alloc_seg(buf);
+	if (!seg) {
+		return NULL;
+	}
 
 	if (sdu_hdr_len) {
 		net_buf_add_le16(seg, net_buf_frags_len(buf));
@@ -1179,6 +1180,9 @@ static int l2cap_chan_le_send(struct bt_l2cap_le_chan *ch, struct net_buf *buf,
 	}
 
 	seg = l2cap_chan_create_seg(ch, buf, sdu_hdr_len);
+	if (!seg) {
+		return -ENOMEM;
+	}
 
 	/* Channel may have been disconnected while waiting for a buffer */
 	if (!ch->chan.conn) {
@@ -1395,11 +1399,6 @@ static int l2cap_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 	case BT_L2CAP_CONN_PARAM_RSP:
 		le_conn_param_rsp(l2cap, buf);
 		break;
-#if defined(CONFIG_BT_CENTRAL)
-	case BT_L2CAP_CONN_PARAM_REQ:
-		le_conn_param_update_req(l2cap, hdr->ident, buf);
-		break;
-#endif /* CONFIG_BT_CENTRAL */
 #if defined(CONFIG_BT_L2CAP_DYNAMIC_CHANNEL)
 	case BT_L2CAP_LE_CONN_REQ:
 		le_conn_req(l2cap, hdr->ident, buf);
@@ -1424,6 +1423,12 @@ static int l2cap_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 		/* Ignored */
 		break;
 #endif /* CONFIG_BT_L2CAP_DYNAMIC_CHANNEL */
+	case BT_L2CAP_CONN_PARAM_REQ:
+		if (IS_ENABLED(CONFIG_BT_CENTRAL)) {
+			le_conn_param_update_req(l2cap, hdr->ident, buf);
+			break;
+		}
+	/* Fall-through */
 	default:
 		BT_WARN("Unknown L2CAP PDU code 0x%02x", hdr->code);
 		l2cap_send_reject(chan->conn, hdr->ident,

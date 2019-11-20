@@ -551,7 +551,11 @@ ssize_t bt_gatt_attr_read_chrc(struct bt_conn *conn,
 						    .properties = _props, })), \
 	BT_GATT_ATTRIBUTE(_uuid, _perm, _read, _write, _value)
 
-#define BT_GATT_CCC_MAX (CONFIG_BT_MAX_PAIRED + CONFIG_BT_MAX_CONN)
+#if IS_ENABLED(CONFIG_BT_SETTINGS_CCC_LAZY_LOADING)
+	#define BT_GATT_CCC_MAX (CONFIG_BT_MAX_CONN)
+#else
+	#define BT_GATT_CCC_MAX (CONFIG_BT_MAX_PAIRED + CONFIG_BT_MAX_CONN)
+#endif
 
 /** @brief GATT CCC configuration entry.
  *  @param id   Local identity, BT_ID_DEFAULT in most cases.
@@ -563,7 +567,6 @@ struct bt_gatt_ccc_cfg {
 	u8_t                    id;
 	bt_addr_le_t		peer;
 	u16_t			value;
-	u8_t			data[4] __aligned(4);
 };
 
 /* Internal representation of CCC value */
@@ -617,34 +620,48 @@ ssize_t bt_gatt_attr_write_ccc(struct bt_conn *conn,
 			       const struct bt_gatt_attr *attr, const void *buf,
 			       u16_t len, u16_t offset, u8_t flags);
 
-/** @def BT_GATT_CCC_MANAGED
- *  @brief Managed Client Characteristic Configuration Declaration Macro.
+
+/** @def BT_GATT_CCC_INITIALIZER
+ *  @brief Initialize Client Characteristic Configuration Declaration Macro.
  *
- *  Helper macro to declare a Managed CCC attribute.
+ *  Helper macro to initialize a Managed CCC attribute value.
  *
  *  @param _changed Configuration changed callback.
  *  @param _write Configuration write callback.
  *  @param _match Configuration match callback.
  */
-#define BT_GATT_CCC_MANAGED(_changed, _write, _match)			\
-	BT_GATT_ATTRIBUTE(BT_UUID_GATT_CCC,				\
-			BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,		\
-			bt_gatt_attr_read_ccc, bt_gatt_attr_write_ccc,	\
-			(&(struct _bt_gatt_ccc) {			\
-				.cfg = {},				\
-				.cfg_changed = _changed,		\
-				.cfg_write = _write,			\
-				.cfg_match = _match }))
+#define BT_GATT_CCC_INITIALIZER(_changed, _write, _match) \
+	{                                            \
+		.cfg = {},                           \
+		.cfg_changed = _changed,             \
+		.cfg_write = _write,                 \
+		.cfg_match = _match,                 \
+	}
+
+/** @def BT_GATT_CCC_MANAGED
+ *  @brief Managed Client Characteristic Configuration Declaration Macro.
+ *
+ *  Helper macro to declare a Managed CCC attribute.
+ *
+ *  @param _ccc CCC attribute user data, shall point to a _bt_gatt_ccc.
+ *  @param _perm CCC access permissions.
+ */
+#define BT_GATT_CCC_MANAGED(_ccc, _perm)				\
+	BT_GATT_ATTRIBUTE(BT_UUID_GATT_CCC, _perm,			\
+			bt_gatt_attr_read_ccc, bt_gatt_attr_write_ccc,  \
+			_ccc)
 
 /** @def BT_GATT_CCC
  *  @brief Client Characteristic Configuration Declaration Macro.
  *
  *  Helper macro to declare a CCC attribute.
  *
- *  @param _cfg_changed Configuration changed callback.
+ *  @param _changed Configuration changed callback.
+ *  @param _perm CCC access permissions.
  */
-#define BT_GATT_CCC(_cfg_changed)					\
-	BT_GATT_CCC_MANAGED(_cfg_changed, NULL, NULL)
+#define BT_GATT_CCC(_changed, _perm)				\
+	BT_GATT_CCC_MANAGED((&(struct _bt_gatt_ccc)			\
+		BT_GATT_CCC_INITIALIZER(_changed, NULL, NULL)), _perm)
 
 /** @brief Read Characteristic Extended Properties Attribute helper
  *
@@ -903,6 +920,27 @@ struct bt_gatt_indicate_params {
  */
 int bt_gatt_indicate(struct bt_conn *conn,
 		     struct bt_gatt_indicate_params *params);
+
+
+/** @brief Check if connection have subscribed to attribute
+ *
+ *  Check if connection has subscribed to attribute value change.
+ *
+ *  The attribute object can be the so called Characteristic Declaration,
+ *  which is usually declared with BT_GATT_CHARACTERISTIC followed
+ *  by BT_GATT_CCC, or the Characteristic Value Declaration which is
+ *  automatically created after the Characteristic Declaration when using
+ *  BT_GATT_CHARACTERISTIC, or the Client Characteristic Configuration
+ *  Descriptor (CCCD) which is created by BT_GATT_CCC.
+ *
+ *  @param conn Connection object.
+ *  @param attr Attribute object.
+ *  @param ccc_value The subscription type, either notifications or indications.
+ *
+ *  @return true if the attribute object has been subscribed.
+ */
+bool bt_gatt_is_subscribed(struct bt_conn *conn,
+			   const struct bt_gatt_attr *attr, u16_t ccc_value);
 
 /** @brief Get ATT MTU for a connection
  *

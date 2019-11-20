@@ -16,9 +16,16 @@
 
 import os, fnmatch
 import re
-import yaml
 import argparse
 from collections import defaultdict
+
+import yaml
+try:
+    # Use the C LibYAML parser if available, rather than the Python parser.
+    # It's much faster.
+    from yaml import CLoader as Loader
+except ImportError:
+    from yaml import Loader
 
 from devicetree import parse_file
 from extract.globals import *
@@ -65,7 +72,8 @@ def generate_prop_defines(node_path, prop):
     # named 'prop' on the device tree node at 'node_path'
 
     binding = get_binding(node_path)
-    if 'parent' in binding and 'bus' in binding['parent']:
+    if 'parent-bus' in binding or \
+       'parent' in binding and 'bus' in binding['parent']:
         # If the binding specifies a parent for the node, then include the
         # parent in the #define's generated for the properties
         parent_path = get_parent_path(node_path)
@@ -154,7 +162,8 @@ def generate_bus_defines(node_path):
     #   bus: ...
 
     binding = get_binding(node_path)
-    if not ('parent' in binding and 'bus' in binding['parent']):
+    if not ('parent-bus' in binding or
+            'parent' in binding and 'bus' in binding['parent']):
         return
 
     parent_path = get_parent_path(node_path)
@@ -162,17 +171,24 @@ def generate_bus_defines(node_path):
     # Check that parent has matching child bus value
     try:
         parent_binding = get_binding(parent_path)
-        parent_bus = parent_binding['child']['bus']
+        if 'child-bus' in parent_binding:
+            parent_bus = parent_binding['child-bus']
+        else:
+            parent_bus = parent_binding['child']['bus']
     except (KeyError, TypeError):
         raise Exception("{0} defines parent {1} as bus master, but {1} is not "
                         "configured as bus master in binding"
                         .format(node_path, parent_path))
 
-    if parent_bus != binding['parent']['bus']:
+    if 'parent-bus' in binding:
+        bus = binding['parent-bus']
+    else:
+        bus = binding['parent']['bus']
+
+    if parent_bus != bus:
         raise Exception("{0} defines parent {1} as {2} bus master, but {1} is "
                         "configured as {3} bus master"
-                        .format(node_path, parent_path,
-                                binding['parent']['bus'], parent_bus))
+                        .format(node_path, parent_path, bus, parent_bus))
 
     # Generate *_BUS_NAME #define
     extract_bus_name(
@@ -327,7 +343,7 @@ def load_bindings(root, binding_dirs):
     compats = []
 
     # Add '!include foo.yaml' handling
-    yaml.Loader.add_constructor('!include', yaml_include)
+    Loader.add_constructor('!include', yaml_include)
 
     # Code below is adapated from edtlib.py
 
@@ -344,7 +360,7 @@ def load_bindings(root, binding_dirs):
         if not dt_compats_search(contents):
             continue
 
-        binding = yaml.load(contents, Loader=yaml.Loader)
+        binding = yaml.load(contents, Loader=Loader)
 
         binding_compats = _binding_compats(binding)
         if not binding_compats:
@@ -352,11 +368,14 @@ def load_bindings(root, binding_dirs):
 
         with open(file, 'r', encoding='utf-8') as yf:
             binding = merge_included_bindings(file,
-                                              yaml.load(yf, Loader=yaml.Loader))
+                                              yaml.load(yf, Loader=Loader))
 
         for compat in binding_compats:
             if compat not in compats:
                 compats.append(compat)
+
+            if 'parent-bus' in binding:
+                bus_to_binding[binding['parent-bus']][compat] = binding
 
             if 'parent' in binding:
                 bus_to_binding[binding['parent']['bus']][compat] = binding
@@ -444,7 +463,7 @@ def load_binding_file(fname):
                        "!include statement: {}".format(fname, filepaths))
 
     with open(filepaths[0], 'r', encoding='utf-8') as f:
-        return yaml.load(f, Loader=yaml.Loader)
+        return yaml.load(f, Loader=Loader)
 
 
 def yaml_inc_error(msg):

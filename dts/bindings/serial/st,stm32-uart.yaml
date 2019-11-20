@@ -1,6 +1,6 @@
 title: STM32 UART
 
-description: >
+description: |
     This binding gives a base representation of the STM32 UART
 
 compatible: "st,stm32-uart"
@@ -13,8 +13,3 @@ properties:
 
     interrupts:
       required: true
-
-    hw-flow-control:
-      type: boolean
-      required: false
-      description: Set to enable RTS/CTS flow control at boot time

@@ -1,10 +1,7 @@
-# Kconfig - Bluetooth drivers configuration options
+# Bluetooth drivers configuration options
 
-#
 # Copyright (c) 2016 Intel Corporation
-#
 # SPDX-License-Identifier: Apache-2.0
-#
 
 comment "Bluetooth HCI Driver Options"
 
@@ -68,9 +65,12 @@ config BT_NO_DRIVER
 
 endchoice
 
+# Workaround for not being able to have commas in macro arguments
+DT_CHOSEN_Z_BT_UART := zephyr,bt-uart
+
 config BT_UART_ON_DEV_NAME
 	string "Device Name of UART Device for Bluetooth"
-	default "$(dt_str_val,DT_BT_UART_ON_DEV_NAME)" if HAS_DTS
+	default "$(dt_chosen_label,$(DT_CHOSEN_Z_BT_UART))" if HAS_DTS
 	default "UART_0"
 	depends on BT_UART
 	help

@@ -10,7 +10,6 @@
 #include <sys/stat.h>
 #include <linker/linker-defs.h>
 #include <sys/util.h>
-#include <kernel_internal.h>
 #include <sys/errno_private.h>
 #include <sys/libc-hooks.h>
 #include <syscall_handler.h>
@@ -137,11 +136,12 @@ int z_impl_zephyr_read_stdin(char *buf, int nbytes)
 }
 
 #ifdef CONFIG_USERSPACE
-Z_SYSCALL_HANDLER(zephyr_read_stdin, buf, nbytes)
+static inline int z_vrfy_z_zephyr_read_stdin(char *buf, int nbytes)
 {
 	Z_OOPS(Z_SYSCALL_MEMORY_WRITE(buf, nbytes));
 	return z_impl_zephyr_read_stdin((char *)buf, nbytes);
 }
+#include <syscalls/z_zephyr_read_stdin_mrsh.c>
 #endif
 
 int z_impl_zephyr_write_stdout(const void *buffer, int nbytes)
@@ -159,11 +159,12 @@ int z_impl_zephyr_write_stdout(const void *buffer, int nbytes)
 }
 
 #ifdef CONFIG_USERSPACE
-Z_SYSCALL_HANDLER(zephyr_write_stdout, buf, nbytes)
+static inline int z_vrfy_z_zephyr_write_stdout(const void *buf, int nbytes)
 {
 	Z_OOPS(Z_SYSCALL_MEMORY_READ(buf, nbytes));
 	return z_impl_zephyr_write_stdout((const void *)buf, nbytes);
 }
+#include <syscalls/z_zephyr_write_stdout_mrsh.c>
 #endif
 
 #ifndef CONFIG_POSIX_API

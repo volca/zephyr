@@ -107,14 +107,16 @@ subsystems = [
     "pinmux_driver_api",
     "pwm_driver_api",
     "entropy_driver_api",
-    "rtc_driver_api",
     "sensor_driver_api",
     "spi_driver_api",
     "uart_driver_api",
     "can_driver_api",
     "ptp_clock_driver_api",
-]
+    "eeprom_driver_api",
 
+    # Fake 'sample driver' subsystem, used by tests/samples
+    "sample_driver_api"
+]
 
 header = """%compare-lengths
 %define lookup-function-name z_object_lookup

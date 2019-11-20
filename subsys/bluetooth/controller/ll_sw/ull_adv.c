@@ -14,6 +14,7 @@
 #include "hal/ticker.h"
 
 #include "util/util.h"
+#include "util/mem.h"
 #include "util/memq.h"
 #include "util/mayfly.h"
 
@@ -443,11 +444,15 @@ u8_t ll_adv_enable(u8_t enable)
 		return BT_HCI_ERR_CMD_DISALLOWED;
 	}
 
-	/* remember addr to use and also update the addr in
-	 * both adv and scan response PDUs.
-	 */
 	lll = &adv->lll;
+
 	pdu_adv = lll_adv_data_peek(lll);
+	if (pdu_adv->tx_addr) {
+		if (!mem_nz(ll_addr_get(1, NULL), BDADDR_SIZE)) {
+			return BT_HCI_ERR_INVALID_PARAM;
+		}
+	}
+
 	pdu_scan = lll_adv_scan_rsp_peek(lll);
 
 	if (0) {
@@ -600,21 +605,27 @@ u8_t ll_adv_enable(u8_t enable)
 		conn_lll->latency_prepare = 0;
 		conn_lll->latency_event = 0;
 		conn_lll->slave.latency_enabled = 0;
-		conn_lll->slave.latency_cancel = 0;
 		conn_lll->slave.window_widening_prepare_us = 0;
 		conn_lll->slave.window_widening_event_us = 0;
 		conn_lll->slave.window_size_prepare_us = 0;
 		/* FIXME: END: Move to ULL? */
+#if defined(CONFIG_BT_CTLR_CONN_META)
+		memset(&conn_lll->conn_meta, 0, sizeof(conn_lll->conn_meta));
+#endif /* CONFIG_BT_CTLR_CONN_META */
 
 		conn->connect_expire = 6;
 		conn->supervision_expire = 0;
 		conn->procedure_expire = 0;
 
 		conn->common.fex_valid = 0;
+		conn->slave.latency_cancel = 0;
 
 		conn->llcp_req = conn->llcp_ack = conn->llcp_type = 0;
 		conn->llcp_rx = NULL;
-		conn->llcp_features = LL_FEAT;
+		conn->llcp_cu.req = conn->llcp_cu.ack = 0;
+		conn->llcp_feature.req = conn->llcp_feature.ack = 0;
+		conn->llcp_feature.features = LL_FEAT;
+		conn->llcp_version.req = conn->llcp_version.ack = 0;
 		conn->llcp_version.tx = conn->llcp_version.rx = 0;
 		conn->llcp_terminate.reason_peer = 0;
 		/* NOTE: use allocated link for generating dedicated
@@ -637,7 +648,7 @@ u8_t ll_adv_enable(u8_t enable)
 
 #if defined(CONFIG_BT_CTLR_DATA_LENGTH)
 		conn->llcp_length.req = conn->llcp_length.ack = 0U;
-		conn->llcp_length.pause_tx = 0U;
+		conn->llcp_length.cache.tx_octets = 0U;
 		conn->default_tx_octets = ull_conn_default_tx_octets_get();
 
 #if defined(CONFIG_BT_CTLR_PHY)
@@ -704,7 +715,7 @@ u8_t ll_adv_enable(u8_t enable)
 		u32_t adv_size		= ll_hdr_size + ADVA_SIZE;
 		const u8_t ll_hdr_us	= BYTES2US(ll_hdr_size, phy);
 		const u8_t rx_to_us	= EVENT_RX_TO_US(phy);
-		const u8_t rxtx_turn_us = EVENT_RX_TX_TURNARROUND(phy);
+		const u8_t rxtx_turn_us = EVENT_RX_TX_TURNAROUND(phy);
 		const u16_t conn_ind_us = ll_hdr_us +
 					  BYTES2US(INITA_SIZE + ADVA_SIZE +
 						   LLDATA_SIZE, phy);
@@ -842,7 +853,14 @@ u8_t ll_adv_enable(u8_t enable)
 				   ticks_anchor, 0,
 				   HAL_TICKER_US_TO_TICKS((u64_t)interval *
 							  625),
-				   TICKER_NULL_REMAINDER, TICKER_NULL_LAZY,
+				   TICKER_NULL_REMAINDER,
+#if !defined(CONFIG_BT_TICKER_COMPATIBILITY_MODE) && \
+	!defined(CONFIG_BT_CTLR_LOW_LAT)
+				   /* Force expiry to ensure timing update */
+				   TICKER_LAZY_MUST_EXPIRE,
+#else
+				   TICKER_NULL_LAZY,
+#endif
 				   (adv->evt.ticks_slot + ticks_slot_overhead),
 				   ticker_cb, adv,
 				   ull_ticker_status_give, (void *)&ret_cb);
@@ -996,23 +1014,26 @@ static void ticker_cb(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 
 	DEBUG_RADIO_PREPARE_A(1);
 
-	/* Increment prepare reference count */
-	ref = ull_ref_inc(&adv->ull);
-	LL_ASSERT(ref);
-
 	lll = &adv->lll;
 
-	/* Append timing parameters */
-	p.ticks_at_expire = ticks_at_expire;
-	p.remainder = remainder;
-	p.lazy = lazy;
-	p.param = lll;
-	mfy.param = &p;
+	if (IS_ENABLED(CONFIG_BT_TICKER_COMPATIBILITY_MODE) ||
+	    (lazy != TICKER_LAZY_MUST_EXPIRE)) {
+		/* Increment prepare reference count */
+		ref = ull_ref_inc(&adv->ull);
+		LL_ASSERT(ref);
 
-	/* Kick LLL prepare */
-	ret = mayfly_enqueue(TICKER_USER_ID_ULL_HIGH, TICKER_USER_ID_LLL,
-			     0, &mfy);
-	LL_ASSERT(!ret);
+		/* Append timing parameters */
+		p.ticks_at_expire = ticks_at_expire;
+		p.remainder = remainder;
+		p.lazy = lazy;
+		p.param = lll;
+		mfy.param = &p;
+
+		/* Kick LLL prepare */
+		ret = mayfly_enqueue(TICKER_USER_ID_ULL_HIGH,
+				     TICKER_USER_ID_LLL, 0, &mfy);
+		LL_ASSERT(!ret);
+	}
 
 	/* Apply adv random delay */
 #if defined(CONFIG_BT_PERIPHERAL)

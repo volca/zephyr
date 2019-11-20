@@ -30,6 +30,7 @@
 #include <kernel_structs.h>
 #include <toolchain.h>
 #include <linker/sections.h>
+#include <ksched.h>
 #include <wait_q.h>
 #include <sys/dlist.h>
 #include <debug/object_tracing_common.h>
@@ -81,13 +82,12 @@ void z_impl_k_mutex_init(struct k_mutex *mutex)
 }
 
 #ifdef CONFIG_USERSPACE
-Z_SYSCALL_HANDLER(k_mutex_init, mutex)
+static inline void z_vrfy_k_mutex_init(struct k_mutex *mutex)
 {
 	Z_OOPS(Z_SYSCALL_OBJ_INIT(mutex, K_OBJ_MUTEX));
-	z_impl_k_mutex_init((struct k_mutex *)mutex);
-
-	return 0;
+	z_impl_k_mutex_init(mutex);
 }
+#include <syscalls/k_mutex_init_mrsh.c>
 #endif
 
 static s32_t new_prio_for_inheritance(s32_t target, s32_t limit)
@@ -196,11 +196,12 @@ int z_impl_k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 }
 
 #ifdef CONFIG_USERSPACE
-Z_SYSCALL_HANDLER(k_mutex_lock, mutex, timeout)
+static inline int z_vrfy_k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 {
 	Z_OOPS(Z_SYSCALL_OBJ(mutex, K_OBJ_MUTEX));
-	return z_impl_k_mutex_lock((struct k_mutex *)mutex, (s32_t)timeout);
+	return z_impl_k_mutex_lock(mutex, timeout);
 }
+#include <syscalls/k_mutex_lock_mrsh.c>
 #endif
 
 void z_impl_k_mutex_unlock(struct k_mutex *mutex)
@@ -236,7 +237,7 @@ void z_impl_k_mutex_unlock(struct k_mutex *mutex)
 
 		k_spin_unlock(&lock, key);
 
-		z_set_thread_return_value(new_owner, 0);
+		arch_thread_return_value_set(new_owner, 0);
 
 		/*
 		 * new owner is already of higher or equal prio than first
@@ -252,15 +253,16 @@ void z_impl_k_mutex_unlock(struct k_mutex *mutex)
 
 k_mutex_unlock_return:
 	k_sched_unlock();
+	sys_trace_end_call(SYS_TRACE_ID_MUTEX_UNLOCK);
 }
 
 #ifdef CONFIG_USERSPACE
-Z_SYSCALL_HANDLER(k_mutex_unlock, mutex)
+static inline void z_vrfy_k_mutex_unlock(struct k_mutex *mutex)
 {
 	Z_OOPS(Z_SYSCALL_OBJ(mutex, K_OBJ_MUTEX));
-	Z_OOPS(Z_SYSCALL_VERIFY(((struct k_mutex *)mutex)->lock_count > 0));
-	Z_OOPS(Z_SYSCALL_VERIFY(((struct k_mutex *)mutex)->owner == _current));
-	z_impl_k_mutex_unlock((struct k_mutex *)mutex);
-	return 0;
+	Z_OOPS(Z_SYSCALL_VERIFY(mutex->lock_count > 0));
+	Z_OOPS(Z_SYSCALL_VERIFY(mutex->owner == _current));
+	z_impl_k_mutex_unlock(mutex);
 }
+#include <syscalls/k_mutex_unlock_mrsh.c>
 #endif

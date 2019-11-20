@@ -16,9 +16,12 @@
 #define _SOC__H_
 
 #ifndef _ASMLANGUAGE
-#include <device.h>
 #include <sys/util.h>
 #include <fsl_common.h>
+
+/* Add include for DTS generated information */
+#include <generated_dts_board.h>
+
 #endif /* !_ASMLANGUAGE */
 
 #define IOCON_PIO_DIGITAL_EN	0x80u
@@ -31,5 +34,6 @@
 #define IOCON_PIO_OPENDRAIN_DI	0x00u
 #define IOCON_PIO_SLEW_STANDARD	0x00u
 #define IOCON_PIO_MODE_PULLUP	0x10u
+#define IOCON_PIO_MODE_PULLDOWN	0x08u
 
 #endif /* _SOC__H_ */

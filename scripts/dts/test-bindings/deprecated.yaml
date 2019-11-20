@@ -22,3 +22,15 @@ properties:
     optional:
         type: int
         category: optional
+
+# Deprecated older 'child-binding'-alike
+sub-node:
+    properties:
+        foos:
+            type: phandle-array
+            required: true
+
+# Deprecated older catch-all version of *-cells
+"#cells":
+    - foo
+    - bar

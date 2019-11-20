@@ -16,6 +16,7 @@
 #include <bluetooth/uuid.h>
 #include <bluetooth/conn.h>
 #include <bluetooth/gatt.h>
+#include <bluetooth/hci.h>
 
 
 #include "pong.h"
@@ -512,7 +513,8 @@ BT_GATT_SERVICE_DEFINE(pong_svc,
 	BT_GATT_PRIMARY_SERVICE(&pong_svc_uuid.uuid),
 	BT_GATT_CHARACTERISTIC(&pong_chr_uuid.uuid, BT_GATT_CHRC_NOTIFY,
 			       BT_GATT_PERM_NONE, NULL, NULL, NULL),
-	BT_GATT_CCC(pong_ccc_cfg_changed),
+	BT_GATT_CCC(pong_ccc_cfg_changed,
+		    BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
 
 void ble_init(void)

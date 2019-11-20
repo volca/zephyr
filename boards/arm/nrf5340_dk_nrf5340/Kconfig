@@ -1,0 +1,32 @@
+# nRF5340 DK NRF5340 board configuration
+
+# Copyright (c) 2019 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_NRF5340_DK_NRF5340_CPUAPP || BOARD_NRF5340_DK_NRF5340_CPUAPPNS
+
+config BOARD_ENABLE_DCDC_APP
+	bool "Enable Application MCU DCDC converter"
+	select SOC_DCDC_NRF53X_APP
+	default y
+
+config BOARD_ENABLE_DCDC_NET
+	bool "Enable Network MCU DCDC converter"
+	select SOC_DCDC_NRF53X_NET
+	default y
+
+config BOARD_ENABLE_DCDC_HV
+	bool "Enable High Voltage DCDC converter"
+	select SOC_DCDC_NRF53X_HV
+	default y
+
+endif # BOARD_NRF5340_DK_NRF5340_CPUAPP || BOARD_NRF5340_DK_NRF5340_CPUAPPNS
+
+if BOARD_NRF5340_DK_NRF5340_CPUNET
+
+# BT_CTLR depends on BT. When BT is enabled we should default to also
+# enabling the controller.
+config BT_CTLR
+	default y if BT
+
+endif # BOARD_NRF5340_DK_NRF5340_CPUNET

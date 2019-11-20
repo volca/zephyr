@@ -17,14 +17,10 @@
  */
 
 #include <kernel.h>
-#include <zephyr/types.h>
-#include <toolchain.h>
-#include <linker/linker-defs.h>
 #include <kernel_internal.h>
-#include <arch/cpu.h>
-#if defined(CONFIG_CPU_CORTEX_M)
-#include <arch/arm/cortex_m/cmsis.h>
-#elif defined(CONFIG_ARMV7_R)
+#include <linker/linker-defs.h>
+
+#if defined(CONFIG_ARMV7_R)
 #include <cortex_r/stack.h>
 #endif
 
@@ -155,22 +151,16 @@ extern FUNC_NORETURN void z_cstart(void);
  *
  * @return N/A
  */
-#ifdef CONFIG_BOOT_TIME_MEASUREMENT
-	extern u64_t __start_time_stamp;
-#endif
-void _PrepC(void)
+void z_arm_prep_c(void)
 {
 	relocate_vector_table();
 	enable_floating_point();
 	z_bss_zero();
 	z_data_copy();
 #if defined(CONFIG_ARMV7_R) && defined(CONFIG_INIT_STACKS)
-	init_stacks();
+	z_arm_init_stacks();
 #endif
-#ifdef CONFIG_BOOT_TIME_MEASUREMENT
-	__start_time_stamp = 0U;
-#endif
-	z_IntLibInit();
+	z_arm_int_lib_init();
 	z_cstart();
 	CODE_UNREACHABLE;
 }

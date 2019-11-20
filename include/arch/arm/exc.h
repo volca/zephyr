@@ -11,8 +11,8 @@
  * ARM-specific kernel exception handling interface. Included by arm/arch.h.
  */
 
-#ifndef ZEPHYR_INCLUDE_ARCH_ARM_CORTEX_M_EXC_H_
-#define ZEPHYR_INCLUDE_ARCH_ARM_CORTEX_M_EXC_H_
+#ifndef ZEPHYR_INCLUDE_ARCH_ARM_EXC_H_
+#define ZEPHYR_INCLUDE_ARCH_ARM_EXC_H_
 
 /* for assembler, only works with constants */
 #define Z_EXC_PRIO(pri) (((pri) << (8 - DT_NUM_IRQ_PRIO_BITS)) & 0xff)
@@ -36,7 +36,7 @@
 #define _EXC_IRQ_DEFAULT_PRIO Z_EXC_PRIO(_IRQ_PRIO_OFFSET)
 
 #ifdef _ASMLANGUAGE
-GTEXT(z_ExcExit);
+GTEXT(z_arm_exc_exit);
 #else
 #include <zephyr/types.h>
 
@@ -64,7 +64,7 @@ struct __esf {
 
 typedef struct __esf z_arch_esf_t;
 
-extern void z_ExcExit(void);
+extern void z_arm_exc_exit(void);
 
 #ifdef __cplusplus
 }
@@ -72,4 +72,4 @@ extern void z_ExcExit(void);
 
 #endif /* _ASMLANGUAGE */
 
-#endif /* ZEPHYR_INCLUDE_ARCH_ARM_CORTEX_M_EXC_H_ */
+#endif /* ZEPHYR_INCLUDE_ARCH_ARM_EXC_H_ */

@@ -20,7 +20,8 @@
 #include <stdbool.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
+#include <bluetooth/hci_err.h>
+#include <bluetooth/addr.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -327,12 +328,21 @@ typedef enum __packed {
  *  to achieve due to local or remote device limitation (e.g., input output
  *  capabilities), or if the maximum number of paired devices has been reached.
  *
+ *  This function may return error if the pairing procedure has already been
+ *  initiated by the local device or the peer device.
+ *
  *  @param conn Connection object.
  *  @param sec Requested security level.
  *
  *  @return 0 on success or negative error
  */
 int bt_conn_set_security(struct bt_conn *conn, bt_security_t sec);
+
+/** @brief Get security level for a connection.
+ *
+ *  @return Connection security level
+ */
+bt_security_t bt_conn_get_security(struct bt_conn *conn);
 
 static inline int __deprecated bt_conn_security(struct bt_conn *conn,
 						bt_security_t sec)
@@ -399,6 +409,15 @@ struct bt_conn_cb {
 	 *
 	 *  @param conn New connection object.
 	 *  @param err HCI error. Zero for success, non-zero otherwise.
+	 *
+	 *  @p err can mean either of the following:
+	 *  - @ref BT_HCI_ERR_UNKNOWN_CONN_ID Creating the connection started by
+	 *    @ref bt_conn_create_le was canceled either by the user through
+	 *    @ref bt_conn_disconnect or by the timeout in the host through
+	 *    :option:`CONFIG_BT_CREATE_CONN_TIMEOUT`.
+	 *  - @p BT_HCI_ERR_ADV_TIMEOUT Directed advertiser started by @ref
+	 *    bt_conn_create_slave_le with high duty cycle timed out after 1.28
+	 *    seconds.
 	 */
 	void (*connected)(struct bt_conn *conn, u8_t err);
 

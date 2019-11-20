@@ -10,8 +10,6 @@ else ()
 endif ()
 
 zephyr_compile_options(
-  -MMD
-  -MP
   ${ARCH_FLAG}
   -include ${ZEPHYR_BASE}/arch/posix/include/posix_cheats.h
   )
@@ -21,19 +19,16 @@ toolchain_cc_no_freestanding_options()
 
 zephyr_include_directories(${BOARD_DIR})
 
-zephyr_compile_options_ifdef(CONFIG_COVERAGE
-  -fprofile-arcs
-  -ftest-coverage
-  -fno-inline
-)
-zephyr_link_libraries_ifdef(CONFIG_COVERAGE
-	-lgcov
-	)
+if (CONFIG_COVERAGE)
+  toolchain_cc_coverage()
+endif ()
 
 if (CONFIG_ASAN)
-	zephyr_compile_options(-fsanitize=address)
-	zephyr_link_libraries(-lasan)
-	zephyr_ld_options(-fsanitize=address)
+  toolchain_cc_asan()
+endif ()
+
+if (CONFIG_UBSAN)
+  toolchain_cc_ubsan()
 endif ()
 
 zephyr_compile_definitions(_POSIX_C_SOURCE=200809 _XOPEN_SOURCE=600 _XOPEN_SOURCE_EXTENDED)

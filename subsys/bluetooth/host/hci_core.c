@@ -47,7 +47,7 @@
 #include "settings.h"
 
 /* Peripheral timeout to initialize Connection Parameter Update procedure */
-#define CONN_UPDATE_TIMEOUT  K_SECONDS(5)
+#define CONN_UPDATE_TIMEOUT  K_MSEC(CONFIG_BT_CONN_PARAM_UPDATE_TIMEOUT)
 #define RPA_TIMEOUT          K_SECONDS(CONFIG_BT_RPA_TIMEOUT)
 
 #define HCI_CMD_TIMEOUT      K_SECONDS(10)
@@ -646,6 +646,13 @@ static void hci_acl(struct net_buf *buf)
 	bt_conn_unref(conn);
 }
 
+static void hci_data_buf_overflow(struct net_buf *buf)
+{
+	struct bt_hci_evt_data_buf_overflow *evt = (void *)buf->data;
+
+	BT_WARN("Data buffer overflow (link type 0x%02x)", evt->link_type);
+}
+
 static void hci_num_completed_packets(struct net_buf *buf)
 {
 	struct bt_hci_evt_num_completed_packets *evt = (void *)buf->data;
@@ -989,7 +996,7 @@ static void slave_update_conn_param(struct bt_conn *conn)
 	 * The Peripheral device should not perform a Connection Parameter
 	 * Update procedure within 5 s after establishing a connection.
 	 */
-	k_delayed_work_submit(&conn->le.update_work, CONN_UPDATE_TIMEOUT);
+	k_delayed_work_submit(&conn->update_work, CONN_UPDATE_TIMEOUT);
 }
 
 #if defined(CONFIG_BT_SMP)
@@ -1124,7 +1131,7 @@ static void enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt)
 
 		/* for slave we may need to add new connection */
 		if (!conn) {
-			conn = bt_conn_add_le(&id_addr);
+			conn = bt_conn_add_le(bt_dev.adv_id, &id_addr);
 		}
 	}
 
@@ -1133,7 +1140,7 @@ static void enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt)
 	    evt->role == BT_HCI_ROLE_MASTER) {
 		/* for whitelist initiator me may need to add new connection. */
 		if (!conn) {
-			conn = bt_conn_add_le(&id_addr);
+			conn = bt_conn_add_le(BT_ID_DEFAULT, &id_addr);
 		}
 	}
 
@@ -1157,7 +1164,6 @@ static void enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt)
 	 */
 	if (IS_ENABLED(CONFIG_BT_PERIPHERAL) &&
 	    conn->role == BT_HCI_ROLE_SLAVE) {
-		conn->id = bt_dev.adv_id;
 		bt_addr_le_copy(&conn->le.init_addr, &peer_addr);
 
 		if (IS_ENABLED(CONFIG_BT_PRIVACY)) {
@@ -3212,18 +3218,36 @@ static void le_ltk_neg_reply(u16_t handle)
 	}
 
 	cp = net_buf_add(buf, sizeof(*cp));
-	cp->handle = handle;
+	cp->handle = sys_cpu_to_le16(handle);
 
 	bt_hci_cmd_send(BT_HCI_OP_LE_LTK_REQ_NEG_REPLY, buf);
+}
+
+static void le_ltk_reply(u16_t handle, u8_t *ltk)
+{
+	struct bt_hci_cp_le_ltk_req_reply *cp;
+	struct net_buf *buf;
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_LTK_REQ_REPLY,
+				sizeof(*cp));
+	if (!buf) {
+		BT_ERR("Out of command buffers");
+		return;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = sys_cpu_to_le16(handle);
+	memcpy(cp->ltk, ltk, sizeof(cp->ltk));
+
+	bt_hci_cmd_send(BT_HCI_OP_LE_LTK_REQ_REPLY, buf);
 }
 
 static void le_ltk_request(struct net_buf *buf)
 {
 	struct bt_hci_evt_le_ltk_request *evt = (void *)buf->data;
-	struct bt_hci_cp_le_ltk_req_reply *cp;
 	struct bt_conn *conn;
 	u16_t handle;
-	u8_t tk[16];
+	u8_t ltk[16];
 
 	handle = sys_le16_to_cpu(evt->handle);
 
@@ -3235,92 +3259,12 @@ static void le_ltk_request(struct net_buf *buf)
 		return;
 	}
 
-	/*
-	 * if TK is present use it, that means pairing is in progress and
-	 * we should use new TK for encryption
-	 *
-	 * Both legacy STK and LE SC LTK have rand and ediv equal to zero.
-	 */
-	if (evt->rand == 0U && evt->ediv == 0U && bt_smp_get_tk(conn, tk)) {
-		buf = bt_hci_cmd_create(BT_HCI_OP_LE_LTK_REQ_REPLY,
-					sizeof(*cp));
-		if (!buf) {
-			BT_ERR("Out of command buffers");
-			goto done;
-		}
-
-		cp = net_buf_add(buf, sizeof(*cp));
-		cp->handle = evt->handle;
-		memcpy(cp->ltk, tk, sizeof(cp->ltk));
-
-		bt_hci_cmd_send(BT_HCI_OP_LE_LTK_REQ_REPLY, buf);
-		goto done;
+	if (bt_smp_request_ltk(conn, evt->rand, evt->ediv, ltk)) {
+		le_ltk_reply(handle, ltk);
+	} else {
+		le_ltk_neg_reply(handle);
 	}
 
-	if (!conn->le.keys) {
-		conn->le.keys = bt_keys_find(BT_KEYS_LTK_P256, conn->id,
-					     &conn->le.dst);
-		if (!conn->le.keys) {
-			conn->le.keys = bt_keys_find(BT_KEYS_SLAVE_LTK,
-						     conn->id, &conn->le.dst);
-		}
-	}
-
-	if (conn->le.keys && (conn->le.keys->keys & BT_KEYS_LTK_P256) &&
-	    evt->rand == 0U && evt->ediv == 0U) {
-		buf = bt_hci_cmd_create(BT_HCI_OP_LE_LTK_REQ_REPLY,
-					sizeof(*cp));
-		if (!buf) {
-			BT_ERR("Out of command buffers");
-			goto done;
-		}
-
-		cp = net_buf_add(buf, sizeof(*cp));
-		cp->handle = evt->handle;
-
-		/* use only enc_size bytes of key for encryption */
-		memcpy(cp->ltk, conn->le.keys->ltk.val,
-		       conn->le.keys->enc_size);
-		if (conn->le.keys->enc_size < sizeof(cp->ltk)) {
-			(void)memset(cp->ltk + conn->le.keys->enc_size, 0,
-				     sizeof(cp->ltk) - conn->le.keys->enc_size);
-		}
-
-		bt_hci_cmd_send(BT_HCI_OP_LE_LTK_REQ_REPLY, buf);
-		goto done;
-	}
-
-#if !defined(CONFIG_BT_SMP_SC_PAIR_ONLY)
-	if (conn->le.keys && (conn->le.keys->keys & BT_KEYS_SLAVE_LTK) &&
-	    !memcmp(conn->le.keys->slave_ltk.rand, &evt->rand, 8) &&
-	    !memcmp(conn->le.keys->slave_ltk.ediv, &evt->ediv, 2)) {
-		buf = bt_hci_cmd_create(BT_HCI_OP_LE_LTK_REQ_REPLY,
-					sizeof(*cp));
-		if (!buf) {
-			BT_ERR("Out of command buffers");
-			goto done;
-		}
-
-		cp = net_buf_add(buf, sizeof(*cp));
-		cp->handle = evt->handle;
-
-		/* use only enc_size bytes of key for encryption */
-		memcpy(cp->ltk, conn->le.keys->slave_ltk.val,
-		       conn->le.keys->enc_size);
-		if (conn->le.keys->enc_size < sizeof(cp->ltk)) {
-			(void)memset(cp->ltk + conn->le.keys->enc_size, 0,
-				     sizeof(cp->ltk) - conn->le.keys->enc_size);
-		}
-
-		bt_hci_cmd_send(BT_HCI_OP_LE_LTK_REQ_REPLY, buf);
-		goto done;
-	}
-#endif /* !CONFIG_BT_SMP_SC_PAIR_ONLY */
-
-	le_ltk_neg_reply(evt->handle);
-	bt_smp_keys_reject(conn);
-
-done:
 	bt_conn_unref(conn);
 }
 #endif /* CONFIG_BT_SMP */
@@ -3662,6 +3606,16 @@ static void le_adv_report(struct net_buf *buf)
 	}
 }
 #endif /* CONFIG_BT_OBSERVER */
+
+int bt_hci_get_conn_handle(const struct bt_conn *conn, u16_t *conn_handle)
+{
+	if (conn->state != BT_CONN_CONNECTED) {
+		return -ENOTCONN;
+	}
+
+	*conn_handle = conn->handle;
+	return 0;
+}
 
 #if defined(CONFIG_BT_HCI_VS_EVT_USER)
 int bt_hci_register_vnd_evt_cb(bt_hci_vnd_evt_cb_t cb)
@@ -4738,7 +4692,7 @@ static const char *vs_hw_platform(u16_t platform)
 static const char *vs_hw_variant(u16_t platform, u16_t variant)
 {
 	static const char * const nordic_str[] = {
-		"reserved", "nRF51x", "nRF52x"
+		"reserved", "nRF51x", "nRF52x", "nRF53x"
 	};
 
 	if (platform != BT_HCI_VS_HW_PLAT_NORDIC) {
@@ -4933,6 +4887,9 @@ static const struct event_handler prio_events[] = {
 	EVENT_HANDLER(BT_HCI_EVT_CMD_STATUS, hci_cmd_status,
 		      sizeof(struct bt_hci_evt_cmd_status)),
 #if defined(CONFIG_BT_CONN)
+	EVENT_HANDLER(BT_HCI_EVT_DATA_BUF_OVERFLOW,
+		      hci_data_buf_overflow,
+		      sizeof(struct bt_hci_evt_data_buf_overflow)),
 	EVENT_HANDLER(BT_HCI_EVT_NUM_COMPLETED_PACKETS,
 		      hci_num_completed_packets,
 		      sizeof(struct bt_hci_evt_num_completed_packets)),
@@ -5036,7 +4993,7 @@ static int bt_init(void)
 
 	if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
 		if (!bt_dev.id_count) {
-			BT_WARN("No ID address. App must call settings_load()");
+			BT_INFO("No ID address. App must call settings_load()");
 			return 0;
 		}
 
@@ -5948,6 +5905,75 @@ int bt_le_scan_stop(void)
 	return bt_le_scan_update(false);
 }
 #endif /* CONFIG_BT_OBSERVER */
+
+#if defined(CONFIG_BT_WHITELIST)
+int bt_le_whitelist_add(const bt_addr_le_t *addr)
+{
+	struct bt_hci_cp_le_add_dev_to_wl *cp;
+	struct net_buf *buf;
+	int err;
+
+	if (!(bt_dev.le.wl_entries < bt_dev.le.wl_size)) {
+		return -ENOMEM;
+	}
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_ADD_DEV_TO_WL, sizeof(*cp));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	bt_addr_le_copy(&cp->addr, addr);
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_ADD_DEV_TO_WL, buf, NULL);
+	if (err) {
+		BT_ERR("Failed to add device to whitelist");
+
+		return err;
+	}
+
+	bt_dev.le.wl_entries++;
+
+	return 0;
+}
+
+int bt_le_whitelist_rem(const bt_addr_le_t *addr)
+{
+	struct bt_hci_cp_le_rem_dev_from_wl *cp;
+	struct net_buf *buf;
+	int err;
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_REM_DEV_FROM_WL, sizeof(*cp));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	bt_addr_le_copy(&cp->addr, addr);
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_REM_DEV_FROM_WL, buf, NULL);
+	if (err) {
+		BT_ERR("Failed to remove device from whitelist");
+		return err;
+	}
+
+	bt_dev.le.wl_entries--;
+	return 0;
+}
+
+int bt_le_whitelist_clear(void)
+{
+	int err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_CLEAR_WL, NULL, NULL);
+
+	if (err) {
+		BT_ERR("Failed to clear whitelist");
+		return err;
+	}
+
+	bt_dev.le.wl_entries = 0;
+	return 0;
+}
+#endif /* defined(CONFIG_BT_WHITELIST) */
 
 int bt_le_set_chan_map(u8_t chan_map[5])
 {
