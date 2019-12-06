@@ -22,8 +22,8 @@
 
 static struct k_fifo *raw_rx;
 
-NET_BUF_POOL_DEFINE(hci_rx_pool, CONFIG_BT_RX_BUF_COUNT,
-		    BT_BUF_RX_SIZE, BT_BUF_USER_DATA_MIN, NULL);
+NET_BUF_POOL_FIXED_DEFINE(hci_rx_pool, CONFIG_BT_RX_BUF_COUNT,
+			  BT_BUF_RX_SIZE, NULL);
 
 struct bt_dev_raw bt_dev;
 
@@ -54,7 +54,7 @@ struct net_buf *bt_buf_get_rx(enum bt_buf_type type, s32_t timeout)
 	buf = net_buf_alloc(&hci_rx_pool, timeout);
 
 	if (buf) {
-		net_buf_reserve(buf, CONFIG_BT_HCI_RESERVE);
+		net_buf_reserve(buf, BT_BUF_RESERVE);
 		bt_buf_set_type(buf, type);
 	}
 

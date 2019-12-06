@@ -368,7 +368,13 @@ static inline void k_obj_free(void *obj)
 struct __packed _k_thread_stack_element {
 	char data;
 };
-typedef struct _k_thread_stack_element k_thread_stack_t;
+
+/**
+ * @typedef k_thread_stack_t
+ * @brief Typedef of struct _k_thread_stack_element
+ *
+ * @see _k_thread_stack_element
+ */
 
 /**
  * @typedef k_thread_entry_t
@@ -388,7 +394,6 @@ typedef struct _k_thread_stack_element k_thread_stack_t;
  *
  * @return N/A
  */
-typedef void (*k_thread_entry_t)(void *p1, void *p2, void *p3);
 
 #ifdef CONFIG_THREAD_MONITOR
 struct __thread_entry {
@@ -1140,10 +1145,13 @@ int k_thread_cpu_mask_disable(k_tid_t thread, int cpu);
 /**
  * @brief Suspend a thread.
  *
- * This routine prevents the kernel scheduler from making @a thread the
- * current thread. All other internal operations on @a thread are still
- * performed; for example, any timeout it is waiting on keeps ticking,
- * kernel objects it is waiting on are still handed to it, etc.
+ * This routine prevents the kernel scheduler from making @a thread
+ * the current thread. All other internal operations on @a thread are
+ * still performed; for example, kernel objects it is waiting on are
+ * still handed to it.  Note that any existing timeouts
+ * (e.g. k_sleep(), or a timeout argument to k_sem_take() et. al.)
+ * will be canceled.  On resume, the thread will begin running
+ * immediately and return from the blocked call.
  *
  * If @a thread is already suspended, the routine has no effect.
  *
@@ -3374,12 +3382,6 @@ __syscall void k_sem_init(struct k_sem *sem, unsigned int initial_count,
  * @param timeout Non-negative waiting period to take the semaphore (in
  *                milliseconds), or one of the special values K_NO_WAIT and
  *                K_FOREVER.
- *
- * @note When porting code from the nanokernel legacy API to the new API, be
- * careful with the return value of this function. The return value is the
- * reverse of the one of nano_sem_take family of APIs: 0 means success, and
- * non-zero means failure, while the nano_sem_take family returns 1 for success
- * and 0 for failure.
  *
  * @retval 0 Semaphore taken.
  * @retval -EBUSY Returned without waiting.

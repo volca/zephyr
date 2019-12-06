@@ -1552,20 +1552,6 @@ struct notify_data {
 	};
 };
 
-static int gatt_send_cb(struct bt_conn *conn, struct net_buf *buf,
-			bt_conn_tx_cb_t cb, void *user_data)
-{
-	int err;
-
-	err = bt_att_send(conn, buf, cb, user_data);
-	if (err) {
-		net_buf_unref(buf);
-		return err;
-	}
-
-	return 0;
-}
-
 static int gatt_notify(struct bt_conn *conn, u16_t handle,
 		       struct bt_gatt_notify_params *params)
 {
@@ -1598,7 +1584,7 @@ static int gatt_notify(struct bt_conn *conn, u16_t handle,
 	net_buf_add(buf, params->len);
 	memcpy(nfy->value, params->data, params->len);
 
-	return gatt_send_cb(conn, buf, params->func, params->user_data);
+	return bt_att_send(conn, buf, params->func, params->user_data);
 }
 
 static void gatt_indicate_rsp(struct bt_conn *conn, u8_t err,
@@ -1629,7 +1615,6 @@ static int gatt_send(struct bt_conn *conn, struct net_buf *buf,
 
 	if (err) {
 		BT_ERR("Error sending ATT PDU: %d", err);
-		net_buf_unref(buf);
 	}
 
 	return err;
@@ -2841,7 +2826,7 @@ static void gatt_find_info_rsp(struct bt_conn *conn, u8_t err,
 	const struct bt_att_find_info_rsp *rsp = pdu;
 	struct bt_gatt_discover_params *params = user_data;
 	u16_t handle = 0U;
-	u8_t len;
+	u16_t len;
 	union {
 		const struct bt_att_info_16 *i16;
 		const struct bt_att_info_128 *i128;
@@ -3022,7 +3007,7 @@ static void parse_read_by_uuid(struct bt_conn *conn,
 	     length -= rsp->len, pdu = (const u8_t *)pdu + rsp->len) {
 		const struct bt_att_data *data = pdu;
 		u16_t handle;
-		u8_t len;
+		u16_t len;
 
 		handle = sys_le16_to_cpu(data->handle);
 
@@ -3286,7 +3271,7 @@ int bt_gatt_write_without_response_cb(struct bt_conn *conn, u16_t handle,
 
 	BT_DBG("handle 0x%04x length %u", handle, length);
 
-	return gatt_send_cb(conn, buf, func, user_data);
+	return bt_att_send(conn, buf, func, user_data);
 }
 
 static int gatt_exec_write(struct bt_conn *conn,
@@ -4152,6 +4137,23 @@ static int sc_clear_by_addr(u8_t id, const bt_addr_le_t *addr)
 	return 0;
 }
 
+static void bt_gatt_clear_subscriptions(const bt_addr_le_t *addr)
+{
+#if defined(CONFIG_BT_GATT_CLIENT)
+	struct bt_gatt_subscribe_params *params, *tmp;
+	sys_snode_t *prev = NULL;
+
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&subscriptions, params, tmp, node) {
+		if (bt_addr_le_cmp(addr, &params->_peer)) {
+			prev = &params->node;
+			continue;
+		}
+		params->value = 0U;
+		gatt_subscription_remove(NULL, prev, params);
+	}
+#endif /* CONFIG_BT_GATT_CLIENT */
+}
+
 int bt_gatt_clear(u8_t id, const bt_addr_le_t *addr)
 {
 	int err;
@@ -4170,6 +4172,8 @@ int bt_gatt_clear(u8_t id, const bt_addr_le_t *addr)
 	if (err < 0) {
 		return err;
 	}
+
+	bt_gatt_clear_subscriptions(addr);
 
 	return 0;
 }
