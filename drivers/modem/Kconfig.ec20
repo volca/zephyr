@@ -1,14 +1,14 @@
-# Kconfig - u-blox SARA R4 driver options
+# quectel ec20 driver options
 
-#
 # Copyright (c) 2019 Foundries.io
-#
 # SPDX-License-Identifier: Apache-2.0
-#
 
 config MODEM_EC20
 	bool "Enable ec20 4G modem driver"
-	select MODEM_RECEIVER
+	select MODEM_CONTEXT
+	select MODEM_CMD_HANDLER
+	select MODEM_IFACE_UART
+	select MODEM_SOCKET
 	select NET_OFFLOAD
 	select NET_SOCKETS_OFFLOAD
 	imply GPIO
