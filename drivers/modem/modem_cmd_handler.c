@@ -388,7 +388,7 @@ static int _modem_cmd_send(struct modem_iface *iface,
 	}
 
     // TODO
-    LOG_WRN("cmd %s", buf);
+    LOG_WRN("cmd %s", log_strdup(buf));
 	iface->write(iface, buf, strlen(buf));
 	iface->write(iface, "\r", 1);
 

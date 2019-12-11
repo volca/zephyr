@@ -816,7 +816,10 @@ static int modem_init(struct device *dev)
 	/* init RSSI query */
 	k_delayed_work_init(&mdata.rssi_query_work, modem_rssi_query_work);
 
-    modem_reset();
+    // TODO: test
+	net_if_up(mdata.net_iface);
+    // TODO: PROD
+    //modem_reset();
 
 error:
 	return ret;
@@ -834,8 +837,7 @@ static void clean_socket(int id) {
 static int ec20_socket(int family,int type, int proto)
 {
 	/* defer modem's socket create call to bind() */
-	int fd = modem_socket_get(&mdata.socket_config, family, type, proto);
-    return fd;
+	return modem_socket_get(&mdata.socket_config, family, type, proto);
 }
 
 static int ec20_close(int id) {
@@ -852,29 +854,31 @@ static int ec20_close(int id) {
 static int ec20_connect(int sock_fd, const struct sockaddr *addr, socklen_t addrlen) {
 	struct modem_socket *sock;
 	int ret;
-	char buf[sizeof("AT+QIOPEN=1,##,\"TCP\",###############,#####,#####,#\r")];
+	char buf[sizeof("AT+QIOPEN=1,##,\"TCP\",###############,#####,#####,#")];
 	u16_t dst_port = 0U;
 
-    LOG_INF("conn 1");
 	if (!addr) {
 		return -EINVAL;
 	}
 
-    LOG_INF("conn 2");
 	sock = modem_socket_from_fd(&mdata.socket_config, sock_fd);
 	if (!sock) {
 		LOG_ERR("Can't locate socket from fd:%d", sock_fd);
 		return -EINVAL;
 	}
 
-    LOG_INF("conn 3");
+    LOG_WRN("init fd=%d socket_id = %d", sock_fd, sock->id);
 	if (sock->id < mdata.socket_config.base_socket_num - 1) {
 		LOG_ERR("Invalid socket_id(%d) from fd:%d",
 			sock->id, sock_fd);
 		return -EINVAL;
 	}
 
-    LOG_INF("conn 4 TCP %d=%d", IPPROTO_TCP, sock->ip_proto);
+	/* make sure we've created the socket */
+	if (sock->id == mdata.socket_config.sockets_len + 1) {
+        sock->id = sock_fd;
+	}
+
 	memcpy(&sock->dst, addr, sizeof(*addr));
 	if (addr->sa_family == AF_INET6) {
 		dst_port = ntohs(net_sin6(addr)->sin6_port);
@@ -889,7 +893,6 @@ static int ec20_connect(int sock_fd, const struct sockaddr *addr, socklen_t addr
 		return 0;
 	}
 
-    LOG_INF("conn 5");
     /* send AT commands(AT+QIOPEN=<contextID>,<socket>,"<TCP/UDP>","<IP_address>/<domain_name>", */
     /* <remote_port>,<local_port>,<access_mode>) to connect TCP server */
     /* contextID   = 1 : use same contextID as AT+QICSGP & AT+QIACT */
@@ -899,9 +902,9 @@ static int ec20_connect(int sock_fd, const struct sockaddr *addr, socklen_t addr
     snprintk(buf, sizeof(buf), "AT+QIOPEN=1,%d,\"TCP\",\"%s\",%d,0,0", 
             sock->id, modem_context_sprint_ip_addr(addr), dst_port);
 	ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
-			     &cmd, 1U, buf,
+			     &cmd, 0U, buf,
 			     &mdata.sem_response, MDM_CMD_TIMEOUT);
-    LOG_INF("conn 6");
+
 	if (ret < 0) {
 		LOG_ERR("%s ret:%d", log_strdup(buf), ret);
 	}
@@ -909,24 +912,13 @@ static int ec20_connect(int sock_fd, const struct sockaddr *addr, socklen_t addr
 	return ret;
 }
 
-static ssize_t ec20_sendto(int id, const void *buf, size_t len, int flags,
+static ssize_t ec20_sendto(int sock_fd, const void *buf, size_t len, int flags,
 			   const struct sockaddr *to, socklen_t tolen)
 {
     LOG_INF("ec20_sendto");
-	return -ENOTSUP;
-}
-
-static ssize_t ec20_send(int id, const void *buf, size_t len, int flags)
-{
-    LOG_INF("ec20_send");
-    /*
-    struct modem_socket *sock;
+	struct modem_socket *sock;
 	char buf_cmd[sizeof("AT+QISEND=#,####")];
 	int ret;
-
-	if (len > MDM_MAX_BUF_LENGTH) {
-		return -EMSGSIZE;
-	}
 
 	sock = (struct modem_socket *)&mdata.sockets[id];
 	if (!sock) {
@@ -954,8 +946,12 @@ error:
 	} else {
 		return -EIO;
 	}
-    */
     return 0;
+}
+
+static ssize_t ec20_send(int sock_fd, const void *buf, size_t len, int flags)
+{
+	return ec20_sendto(sock_fd, buf, len, flags, NULL, 0U);
 }
 
 static ssize_t ec20_recv(int id, void *buf, size_t max_len, int flags) {
@@ -1046,7 +1042,6 @@ static int ec20_getaddrinfo(const char *node, const char *service,
 				  const struct addrinfo *hints,
 				  struct addrinfo **res) 
 {
-    LOG_INF("ec20_getaddrinfo");
 	int16_t ret = 0; 
 	unsigned long port = 0;
 	int socktype = SOCK_STREAM, proto = IPPROTO_TCP;
@@ -1074,7 +1069,6 @@ static int ec20_getaddrinfo(const char *node, const char *service,
 
 	/* Now, try to resolve host name: */
     snprintk(buf, sizeof(buf), "AT+QIDNSGIP=1,\"%s\"", node);
-    LOG_WRN("dsn cmd %s", log_strdup(buf));
 	ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
 			     NULL, 0U, buf,
 			     &mdata.sem_response, MDM_CMD_TIMEOUT);
@@ -1132,7 +1126,6 @@ exit:
 
 static void ec20_freeaddrinfo(struct addrinfo *res)
 {
-    LOG_INF("ec20_freeaddrinfo");
 	__ASSERT_NO_MSG(res);
 
 	free(res->ai_addr);
