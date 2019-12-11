@@ -73,6 +73,7 @@ static struct modem_pin modem_pins[] = {
 #define MDM_NETWORK_RETRY_COUNT		3
 #define MDM_WAIT_FOR_RSSI_COUNT		10
 #define MDM_WAIT_FOR_RSSI_DELAY		K_SECONDS(2)
+#define MDM_WAIT_FOR_POWER_DOWN		K_SECONDS(1)
 
 #define BUF_ALLOC_TIMEOUT K_SECONDS(1)
 
@@ -263,13 +264,25 @@ MODEM_CMD_DEFINE(on_cmd_exterror)
 /* Handler: <manufacturer> */
 MODEM_CMD_DEFINE(on_cmd_atcmdinfo_manufacturer)
 {
-    strcpy(mdata.mdm_manufacturer, "Quectel");
+	size_t out_len;
+
+	out_len = net_buf_linearize(mdata.mdm_manufacturer,
+				    sizeof(mdata.mdm_manufacturer) - 1,
+				    data->rx_buf, 0, len);
+	mdata.mdm_manufacturer[out_len] = '\0';
 	LOG_INF("Manufacturer: %s", log_strdup(mdata.mdm_manufacturer));
 }
 
 /* Handler: <model> */
 MODEM_CMD_DEFINE(on_cmd_atcmdinfo_model)
 {
+	size_t out_len;
+
+	out_len = net_buf_linearize(mdata.mdm_model,
+				    sizeof(mdata.mdm_model) - 1,
+				    data->rx_buf, 0, len);
+	mdata.mdm_model[out_len] = '\0';
+	LOG_INF("Model: %s", log_strdup(mdata.mdm_model));
 }
 
 /* Handler: <rev> */
@@ -287,6 +300,12 @@ MODEM_CMD_DEFINE(on_cmd_atcmdinfo_revision)
 /* Handler: <IMEI> */
 MODEM_CMD_DEFINE(on_cmd_atcmdinfo_imei)
 {
+	size_t out_len;
+
+	out_len = net_buf_linearize(mdata.mdm_imei, sizeof(mdata.mdm_imei) - 1,
+				    data->rx_buf, 0, len);
+	mdata.mdm_imei[out_len] = '\0';
+	LOG_INF("IMEI: %s", log_strdup(mdata.mdm_imei));
 }
 
 /* Handler: +CSQ: rssi[0],ber[1] */
@@ -303,6 +322,27 @@ MODEM_CMD_DEFINE(on_cmd_atcmdinfo_rssi_csq)
 
 	LOG_INF("RSSI: %d", mctx.data_rssi);
 }
+
+/* Handler: +QIOPEN: <socket_id>,0 */
+MODEM_CMD_DEFINE(on_cmd_sockcreate)
+{
+	struct modem_socket *sock = NULL;
+
+	/* look up new socket by special id */
+	sock = modem_socket_from_newid(&mdata.socket_config);
+	if (sock) {
+		sock->id = ATOI(argv[0],
+				mdata.socket_config.base_socket_num - 1,
+				"socket_id");
+		/* on error give up modem socket */
+		if (sock->id == mdata.socket_config.base_socket_num - 1) {
+			modem_socket_put(&mdata.socket_config, sock->sock_fd);
+		}
+	}
+
+	/* don't give back semaphore -- OK to follow */
+}
+
 
 MODEM_CMD_DEFINE(on_cmd_socksend)
 {
@@ -548,8 +588,7 @@ static int pin_init(void)
 
 static void modem_rssi_query_work(struct k_work *work)
 {
-	struct modem_cmd cmd =
-		MODEM_CMD("+CSQ: ", on_cmd_atcmdinfo_rssi_csq, 2U, ",");
+	struct modem_cmd cmd = MODEM_CMD("+CSQ: ", on_cmd_atcmdinfo_rssi_csq, 2U, ",");
 	static char *send_cmd = "AT+CSQ";
 	int ret;
 
@@ -574,22 +613,26 @@ static void modem_reset(void)
 	int ret = 0, retry_count = 0, counter = 0;
 
 	static struct setup_cmd setup_cmds[] = {
-		/* turn on echo */
-		SETUP_CMD_NOHANDLE("ATE1"),
-		SETUP_CMD_NOHANDLE("ATI"),
+		/* turn off echo */
+		SETUP_CMD_NOHANDLE("ATE0"),
+		SETUP_CMD("AT+GMI", "", on_cmd_atcmdinfo_manufacturer, 0U, ""),
 		SETUP_CMD("AT+CGMM", "", on_cmd_atcmdinfo_model, 0U, ""),
 		SETUP_CMD("AT+CGSN", "", on_cmd_atcmdinfo_imei, 0U, ""),
+		SETUP_CMD("AT+GMR", "", on_cmd_atcmdinfo_revision, 0U, ""),
 		SETUP_CMD_NOHANDLE("AT+QICFG=\"dataformat\",0,0"),
 		SETUP_CMD_NOHANDLE("AT+COPS=0,0"),
     };
 
-    //send_at_cmd("AT+QPOWD", &mdata.sem_response, MDM_CMD_TIMEOUT);
 	/* bring down network interface */
 	atomic_clear_bit(mdata.net_iface->if_dev->flags, NET_IF_UP);
 
 restart:
 	/* stop RSSI delay work */
 	k_delayed_work_cancel(&mdata.rssi_query_work);
+
+    modem_cmd_send_nolock(&mctx.iface, &mctx.cmd_handler,
+                     NULL, 0, "AT+QPOWD", &mdata.sem_response,
+				     MDM_WAIT_FOR_POWER_DOWN);
 
 	pin_init();
 
@@ -652,18 +695,20 @@ restart:
 		goto restart;
 	}
 
-    /*
-    ret = send_at_cmd("AT+QIACT=1", &mdata.sem_response, MDM_CMD_TIMEOUT);
-    if (ret < 0) {
-		LOG_ERR("AT+QIACT=1 ret:%d", ret);
-	}
+    ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
+                 NULL, 0, "AT+QIACT=1", &mdata.sem_response,
+                 MDM_CMD_TIMEOUT);
+    if (ret < 0 && ret != -ETIMEDOUT) {
+        goto error;
+    }
 
-    // TODO
-    ret = send_at_cmd("AT+QIDNSCFG=1,\"119.29.29.29\",\"8.8.8.8\"", &mdata.sem_response, MDM_CMD_TIMEOUT);
-    if (ret < 0) {
-		LOG_ERR("AT+QIDNSCFG ret:%d", ret);
-	}
-    */
+    ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
+                 NULL, 0, "AT+QIDNSCFG=1,\"119.29.29.29\",\"8.8.8.8\"", &mdata.sem_response,
+                 MDM_CMD_TIMEOUT);
+    if (ret < 0 && ret != -ETIMEDOUT) {
+        goto error;
+    }
+
 	LOG_INF("Network is ready.");
 
 	/* Set iface up */
@@ -790,7 +835,8 @@ static void clean_socket(int id) {
 static int ec20_socket(int family,int type, int proto)
 {
 	/* defer modem's socket create call to bind() */
-	return modem_socket_get(&mdata.socket_config, family, type, proto);
+	int fd = modem_socket_get(&mdata.socket_config, family, type, proto);
+    return fd;
 }
 
 static int ec20_close(int id) {
@@ -804,71 +850,76 @@ static int ec20_close(int id) {
     return 0;
 }
 
-static int ec20_connect(int id, const struct sockaddr *addr, socklen_t addrlen) {
-	int ret;
-    /*
-	char type[4], 
-         buf[sizeof("AT+QIOPEN=1,##,\"TCP\",###############,#####,#####,#\r")];
+static int ec20_connect(int sock_fd, const struct sockaddr *addr, socklen_t addrlen) {
 	struct modem_socket *sock;
+	int ret;
+	char buf[sizeof("AT+QIOPEN=1,##,\"TCP\",###############,#####,#####,#\r")];
+	u16_t dst_port = 0U;
 
-    sock = (struct modem_socket *)&mdata.sockets[id];
-	if (!sock) {
-		LOG_ERR("Can not locate socket id: %u", id);
-	}
-
-	int port = ntohs((net_sin(addr)->sin_port));
-
-	if (port < 0) {
-		LOG_ERR("Invalid port: %d", port);
+    LOG_INF("conn 1");
+	if (!addr) {
 		return -EINVAL;
 	}
 
-    strcpy(type, SOCK_TYPE_TCP);
-    */
+    LOG_INF("conn 2");
+	sock = modem_socket_from_fd(&mdata.socket_config, sock_fd);
+	if (!sock) {
+		LOG_ERR("Can't locate socket from fd:%d", sock_fd);
+		return -EINVAL;
+	}
 
+    LOG_INF("conn 3");
+	if (sock->id < mdata.socket_config.base_socket_num - 1) {
+		LOG_ERR("Invalid socket_id(%d) from fd:%d",
+			sock->id, sock_fd);
+		return -EINVAL;
+	}
+
+    LOG_INF("conn 4 TCP %d=%d", IPPROTO_TCP, sock->ip_proto);
+	memcpy(&sock->dst, addr, sizeof(*addr));
+	if (addr->sa_family == AF_INET6) {
+		dst_port = ntohs(net_sin6(addr)->sin6_port);
+	} else if (addr->sa_family == AF_INET) {
+		dst_port = ntohs(net_sin(addr)->sin_port);
+	} else {
+		return -EPFNOSUPPORT;
+	}
+
+	/* skip socket connect if UDP */
+	if (sock->ip_proto == IPPROTO_UDP) {
+		return 0;
+	}
+
+    LOG_INF("conn 5");
     /* send AT commands(AT+QIOPEN=<contextID>,<socket>,"<TCP/UDP>","<IP_address>/<domain_name>", */
     /* <remote_port>,<local_port>,<access_mode>) to connect TCP server */
     /* contextID   = 1 : use same contextID as AT+QICSGP & AT+QIACT */
     /* local_port  = 0 : local port assigned automatically */
     /* access_mode = 0 : Buffer mode */
-
-
-    /*
-    snprintk(buf, sizeof(buf), "AT+QIOPEN=1,%d,\"%s\",\"%s\",%d,0,0", 
-            id, type, modem_sprint_ip_addr(addr), port);
-    ret = send_at_cmd(buf, &mdata.sem_response, MDM_CMD_TIMEOUT);
-
+	struct modem_cmd cmd = MODEM_CMD("+QIOPEN: ", on_cmd_sockcreate, 1U, "");
+    snprintk(buf, sizeof(buf), "AT+QIOPEN=1,%d,\"TCP\",\"%s\",%d,0,0", 
+            sock->id, modem_context_sprint_ip_addr(addr), dst_port);
+	ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
+			     &cmd, 1U, buf,
+			     &mdata.sem_response, MDM_CMD_TIMEOUT);
+    LOG_INF("conn 6");
 	if (ret < 0) {
 		LOG_ERR("%s ret:%d", log_strdup(buf), ret);
-        goto error;
 	}
 
-	ret = k_sem_take(&sock->sem_data_ready, MDM_CMD_CONN_TIMEOUT);
-	if (ret < 0) {
-		ec20_close(id);
-		return ret;
-	}
-    */
-
-    goto error;
-	return 0;
-
-error:
-	if (ret == -ETIMEDOUT) {
-		return -ETIMEDOUT;
-	} else {
-		return -EIO;
-	}
+	return ret;
 }
 
 static ssize_t ec20_sendto(int id, const void *buf, size_t len, int flags,
 			   const struct sockaddr *to, socklen_t tolen)
 {
+    LOG_INF("ec20_sendto");
 	return -ENOTSUP;
 }
 
 static ssize_t ec20_send(int id, const void *buf, size_t len, int flags)
 {
+    LOG_INF("ec20_send");
     /*
     struct modem_socket *sock;
 	char buf_cmd[sizeof("AT+QISEND=#,####")];
@@ -988,25 +1039,24 @@ int ec20_poll(struct pollfd *fds, int nfds, int timeout)
 		return countFound;
 	}
     */
+
+    return 0;
 }
 
 static int ec20_getaddrinfo(const char *node, const char *service,
 				  const struct addrinfo *hints,
 				  struct addrinfo **res) 
 {
+    LOG_INF("ec20_getaddrinfo");
 	int16_t ret = 0; 
-    goto exit;
-    /*
 	unsigned long port = 0;
 	int socktype = SOCK_STREAM, proto = IPPROTO_TCP;
 	struct addrinfo *ai;
 	struct sockaddr *ai_addr;
 	uint32_t ipaddr[4];
 	char buf[128];
-    */
 
 	/* Check args: */
-    /*
 	if (!node) {
 		ret = EAI_NONAME;
 		goto exit;
@@ -1022,7 +1072,6 @@ static int ec20_getaddrinfo(const char *node, const char *service,
 		ret = EAI_NONAME;
 		goto exit;
 	}
-    */
 
 	/* Now, try to resolve host name: */
 
@@ -1084,6 +1133,7 @@ exit:
 
 static void ec20_freeaddrinfo(struct addrinfo *res)
 {
+    LOG_INF("ec20_freeaddrinfo");
 	__ASSERT_NO_MSG(res);
 
 	free(res->ai_addr);
@@ -1093,6 +1143,7 @@ static void ec20_freeaddrinfo(struct addrinfo *res)
 static int ec20_bind(int sock_fd, const struct sockaddr *addr,
 			socklen_t addrlen)
 {
+    LOG_INF("ec20_bind");
 	struct modem_socket *sock = NULL;
 
 	sock = modem_socket_from_fd(&mdata.socket_config, sock_fd);
