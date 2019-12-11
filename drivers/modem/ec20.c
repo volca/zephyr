@@ -57,6 +57,7 @@ static struct modem_pin modem_pins[] = {
 #define MDM_CMD_SEND_TIMEOUT		K_SECONDS(10)
 #define MDM_CMD_READ_TIMEOUT		K_SECONDS(10)
 #define MDM_CMD_CONN_TIMEOUT		K_SECONDS(31)
+#define MDM_CMD_DNS_TIMEOUT			K_SECONDS(30)
 
 #define MDM_REGISTRATION_TIMEOUT	K_SECONDS(180)
 #define MDM_PROMPT_CMD_DELAY		K_MSEC(10)
@@ -415,15 +416,13 @@ MODEM_CMD_DEFINE(on_cmd_socknotifydata)
 /* Handler: +QIURC: "dnsgip","<addr>" */
 MODEM_CMD_DEFINE(on_cmd_getaddr)
 {
-    /*
 	size_t out_len;
 
-	out_len = net_buf_linearize(mdata.last_dns_addr, sizeof(mdata.last_dns_addr) - 1, *buf, 0, len);
-    // remove the last double quote
+	out_len = net_buf_linearize(mdata.last_dns_addr, sizeof(mdata.last_dns_addr) - 1, 
+				    data->rx_buf, 0, len);
 	mdata.last_dns_addr[out_len - 1] = 0;
-
-    k_sem_give(&mdata.sem_response);
-    */
+	k_sem_give(&mdata.sem_response);
+	LOG_INF("Resolve addr: %s", log_strdup(mdata.last_dns_addr));
 }
 
 MODEM_CMD_DEFINE(on_cmd_write_ready)
@@ -734,6 +733,7 @@ static struct modem_cmd response_cmds[] = {
 static struct modem_cmd unsol_cmds[] = {
 	MODEM_CMD("+QICLOSE: ", on_cmd_socknotifyclose, 1U, ""),
 	MODEM_CMD("+QIURC: \"recv\",", on_cmd_socknotifydata, 2U, ","),
+	MODEM_CMD("+QIURC: \"dnsgip\",\"", on_cmd_getaddr, 0U, ""),
 	MODEM_CMD("+CREG: ", on_cmd_socknotifycreg, 1U, ""),
 };
 
@@ -765,7 +765,6 @@ static int modem_init(struct device *dev)
 	mdata.cmd_handler_data.cmds_len[CMD_RESP] = ARRAY_SIZE(response_cmds);
 	mdata.cmd_handler_data.cmds[CMD_UNSOL] = unsol_cmds;
 	mdata.cmd_handler_data.cmds_len[CMD_UNSOL] = ARRAY_SIZE(unsol_cmds);
-
 	mdata.cmd_handler_data.read_buf = &mdata.cmd_read_buf[0];
 	mdata.cmd_handler_data.read_buf_len = sizeof(mdata.cmd_read_buf);
 	mdata.cmd_handler_data.match_buf = &mdata.cmd_match_buf[0];
@@ -1074,19 +1073,20 @@ static int ec20_getaddrinfo(const char *node, const char *service,
 	}
 
 	/* Now, try to resolve host name: */
-
-    /*
-	snprintf(buf, sizeof(buf), "AT+QIDNSGIP=1,\"%s\"", node);
-    send_at_cmd(buf,  &mdata.sem_response, MDM_CMD_CONN_TIMEOUT);
+    snprintk(buf, sizeof(buf), "AT+QIDNSGIP=1,\"%s\"", node);
+    LOG_WRN("dsn cmd %s", log_strdup(buf));
+	ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
+			     NULL, 0U, buf,
+			     &mdata.sem_response, MDM_CMD_TIMEOUT);
 	if (ret < 0) {
-		LOG_ERR("Could not resolve name: %s, ret: %d",
-			    node, ret);
+		LOG_ERR("%s ret:%d", log_strdup(buf), ret);
 		ret = EAI_NONAME;
-		goto exit;
+        goto exit;
 	}
 
-    ret = k_sem_take(&mdata.sem_response, MDM_CMD_TIMEOUT);
-    
+    /* wait for DNS data */
+    k_sem_take(&mdata.sem_response, MDM_CMD_DNS_TIMEOUT);
+
     ret = inet_pton(AF_INET, mdata.last_dns_addr, &ipaddr[0]);
     ipaddr[0] = htonl(ipaddr[0]);
     
@@ -1124,7 +1124,6 @@ static int ec20_getaddrinfo(const char *node, const char *service,
         goto exit;
     }
 	ai->ai_addr = ai_addr;
-    */
     return 0;
 
 exit:
