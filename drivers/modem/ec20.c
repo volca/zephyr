@@ -158,8 +158,6 @@ static struct modem_context mctx;
 /* helper macro to keep readability */
 #define ATOI(s_, value_, desc_) modem_atoi(s_, value_, desc_, __func__)
 
-static void clean_socket(int id);
-
 /**
  * @brief  Convert string to long integer, but handle errors
  *
@@ -327,23 +325,30 @@ MODEM_CMD_DEFINE(on_cmd_atcmdinfo_rssi_csq)
 /* Handler: +QIOPEN: <socket_id>,0 */
 MODEM_CMD_DEFINE(on_cmd_sockcreate)
 {
-	struct modem_socket *sock = NULL;
+	struct modem_socket *sock;
+    int fd = ATOI(argv[0], 0, "socket_id"),
+        ret = ATOI(argv[1], 0, "err");
 
-	/* look up new socket by special id */
-	sock = modem_socket_from_newid(&mdata.socket_config);
-	if (sock) {
-		sock->id = ATOI(argv[0],
-				mdata.socket_config.base_socket_num - 1,
-				"socket_id");
-		/* on error give up modem socket */
-		if (sock->id == mdata.socket_config.base_socket_num - 1) {
-			modem_socket_put(&mdata.socket_config, sock->sock_fd);
-		}
+	sock = modem_socket_from_fd(&mdata.socket_config, fd);
+	if (!sock ) {
+		LOG_ERR("Can't locate socket from fd:%d", fd);
+		return;
 	}
 
-	/* don't give back semaphore -- OK to follow */
+    if (ret != 0) {
+        modem_socket_put(&mdata.socket_config, sock->sock_fd);
+        return;
+    }
+
+	k_sem_give(&mdata.sem_response);
 }
 
+/* Handler: SEND [OK|FAIL] */
+MODEM_CMD_DEFINE(on_cmd_sockwrite)
+{
+	/* TODO: check length against original send length*/
+	k_sem_give(&mdata.sem_response);
+}
 
 MODEM_CMD_DEFINE(on_cmd_socksend)
 {
@@ -732,7 +737,8 @@ static struct modem_cmd response_cmds[] = {
 /* UNSOLICITED Commands */
 static struct modem_cmd unsol_cmds[] = {
 	MODEM_CMD("+QICLOSE: ", on_cmd_socknotifyclose, 1U, ""),
-	MODEM_CMD("+QIURC: \"recv\",", on_cmd_socknotifydata, 2U, ","),
+	MODEM_CMD("+QIURC: \"recv\",", on_cmd_socknotifydata, 1U, ""),
+	MODEM_CMD("+QIOPEN: ", on_cmd_sockcreate, 2U, ","),
 	MODEM_CMD("+QIURC: \"dnsgip\",\"", on_cmd_getaddr, 0U, ""),
 	MODEM_CMD("+CREG: ", on_cmd_socknotifycreg, 1U, ""),
 };
@@ -817,21 +823,12 @@ static int modem_init(struct device *dev)
 	k_delayed_work_init(&mdata.rssi_query_work, modem_rssi_query_work);
 
     // TODO: test
-	net_if_up(mdata.net_iface);
+	//net_if_up(mdata.net_iface);
     // TODO: PROD
-    //modem_reset();
+    modem_reset();
 
 error:
 	return ret;
-}
-
-static void clean_socket(int id) {
-    /*
-    struct modem_socket *sock = NULL;
-    sock = &mdata.sockets[id];
-	sock->context = NULL;
-	k_sem_reset(&sock->sem_data_ready);
-    */
 }
 
 static int ec20_socket(int family,int type, int proto)
@@ -840,14 +837,32 @@ static int ec20_socket(int family,int type, int proto)
 	return modem_socket_get(&mdata.socket_config, family, type, proto);
 }
 
-static int ec20_close(int id) {
-    /*
-	char buffer[sizeof("AT+QICLOSE=#")];
+static int ec20_close(int sock_fd) {
+    LOG_WRN("ec20_close");
+	struct modem_socket *sock;
+	char buf[sizeof("AT+QICLOSE=#")];
+	int ret;
 
-	snprintf(buffer, sizeof(buffer), "AT+QICLOSE=%u", id);
-    send_at_cmd(buffer, &mdata.sem_response, MDM_CMD_TIMEOUT);
-    clean_socket(id);
-    */
+	sock = modem_socket_from_fd(&mdata.socket_config, sock_fd);
+	if (!sock) {
+		/* socket was already closed?  Exit quietly here. */
+		return 0;
+	}
+
+	/* make sure we assigned an id */
+	if (sock->id < mdata.socket_config.base_socket_num) {
+		return 0;
+	}
+
+	snprintk(buf, sizeof(buf), "AT+QICLOSE=%d", sock->id);
+	ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
+			     NULL, 0U, buf,
+			     &mdata.sem_response, MDM_CMD_TIMEOUT);
+	if (ret < 0) {
+		LOG_ERR("%s ret:%d", log_strdup(buf), ret);
+	}
+
+	modem_socket_put(&mdata.socket_config, sock_fd);
     return 0;
 }
 
@@ -867,7 +882,6 @@ static int ec20_connect(int sock_fd, const struct sockaddr *addr, socklen_t addr
 		return -EINVAL;
 	}
 
-    LOG_WRN("init fd=%d socket_id = %d", sock_fd, sock->id);
 	if (sock->id < mdata.socket_config.base_socket_num - 1) {
 		LOG_ERR("Invalid socket_id(%d) from fd:%d",
 			sock->id, sock_fd);
@@ -898,16 +912,79 @@ static int ec20_connect(int sock_fd, const struct sockaddr *addr, socklen_t addr
     /* contextID   = 1 : use same contextID as AT+QICSGP & AT+QIACT */
     /* local_port  = 0 : local port assigned automatically */
     /* access_mode = 0 : Buffer mode */
-	struct modem_cmd cmd = MODEM_CMD("+QIOPEN: ", on_cmd_sockcreate, 1U, "");
     snprintk(buf, sizeof(buf), "AT+QIOPEN=1,%d,\"TCP\",\"%s\",%d,0,0", 
             sock->id, modem_context_sprint_ip_addr(addr), dst_port);
 	ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
-			     &cmd, 0U, buf,
+			     NULL, 0U, buf,
 			     &mdata.sem_response, MDM_CMD_TIMEOUT);
 
 	if (ret < 0) {
 		LOG_ERR("%s ret:%d", log_strdup(buf), ret);
 	}
+
+	k_sem_reset(&mdata.sem_response);
+	ret = k_sem_take(&mdata.sem_response, MDM_CMD_TIMEOUT);
+
+exit:
+    return ret;
+}
+
+/* send binary data */
+static int send_socket_data(struct modem_socket *sock,
+			    const struct sockaddr *dst_addr,
+			    const char *buf, size_t buf_len, int timeout)
+{
+	int ret;
+	char send_buf[sizeof("AT+QISEND=#,#####\r\n")];
+	struct modem_cmd cmd[] = {
+		MODEM_CMD("SEND OK", on_cmd_sockwrite, 0U, ""),
+		MODEM_CMD("SEND FAIL", on_cmd_sockwrite, 0U, ""),
+	};
+
+	if (!sock) {
+		return -EINVAL;
+	}
+
+	k_sem_take(&mdata.cmd_handler_data.sem_tx_lock, K_FOREVER);
+
+    snprintk(send_buf, sizeof(send_buf), "AT+QISEND=%u,%u", sock->id, buf_len);
+	ret = modem_cmd_send_nolock(&mctx.iface, &mctx.cmd_handler,
+				    NULL, 0U, send_buf, NULL, K_NO_WAIT);
+
+	if (ret < 0) {
+		goto exit;
+	}
+
+	/* set command handlers */
+	ret = modem_cmd_handler_update_cmds(&mdata.cmd_handler_data,
+					    cmd, ARRAY_SIZE(cmd), true);
+	if (ret < 0) {
+		goto exit;
+	}
+
+	/* slight pause per spec so that @ prompt is received */
+	k_sleep(MDM_PROMPT_CMD_DELAY);
+	mctx.iface.write(&mctx.iface, buf, buf_len);
+
+	if (timeout == K_NO_WAIT) {
+		ret = 0;
+		goto exit;
+	}
+
+	k_sem_reset(&mdata.sem_response);
+	ret = k_sem_take(&mdata.sem_response, timeout);
+
+	if (ret == 0) {
+		ret = modem_cmd_handler_get_error(&mdata.cmd_handler_data);
+	} else if (ret == -EAGAIN) {
+		ret = -ETIMEDOUT;
+	}
+
+exit:
+	/* unset handler commands and ignore any errors */
+	(void)modem_cmd_handler_update_cmds(&mdata.cmd_handler_data,
+					    NULL, 0U, false);
+	k_sem_give(&mdata.cmd_handler_data.sem_tx_lock);
 
 	return ret;
 }
@@ -917,36 +994,22 @@ static ssize_t ec20_sendto(int sock_fd, const void *buf, size_t len, int flags,
 {
     LOG_INF("ec20_sendto");
 	struct modem_socket *sock;
-	char buf_cmd[sizeof("AT+QISEND=#,####")];
-	int ret;
 
-	sock = (struct modem_socket *)&mdata.sockets[id];
-	if (!sock) {
-		LOG_ERR("Can't locate socket for id: %u", id);
+	if (!buf || len == 0) {
 		return -EINVAL;
 	}
 
-	snprintf(buf_cmd, sizeof(buf_cmd), "AT+QISEND=%u,%u", id, len);
-	ret = send_at_cmd(buf_cmd, &sock->sem_data_ready, MDM_CMD_TIMEOUT);
-	if (ret < 0) {
-		LOG_ERR("Write request failed.");
-		goto error;
+	sock = modem_socket_from_fd(&mdata.socket_config, sock_fd);
+	if (!sock) {
+		LOG_ERR("Can't locate socket from fd:%d", sock_fd);
+		return -EINVAL;
 	}
 
-    k_sleep(MDM_PROMPT_CMD_DELAY);
-
-	k_sem_reset(&mdata.sem_response);
-	mdm_receiver_send(&mctx, buf, len);
-	k_sem_take(&mdata.sem_response, MDM_CMD_SEND_TIMEOUT);
-
-	return len;
-error:
-	if (ret == -ETIMEDOUT) {
-		return -ETIMEDOUT;
-	} else {
-		return -EIO;
+	if (!to && sock->ip_proto == IPPROTO_UDP) {
+		to = &sock->dst;
 	}
-    return 0;
+
+	return send_socket_data(sock, to, buf, len, MDM_CMD_TIMEOUT);
 }
 
 static ssize_t ec20_send(int sock_fd, const void *buf, size_t len, int flags)
@@ -955,6 +1018,7 @@ static ssize_t ec20_send(int sock_fd, const void *buf, size_t len, int flags)
 }
 
 static ssize_t ec20_recv(int id, void *buf, size_t max_len, int flags) {
+    LOG_WRN("ec20_recv");
 	int ret;
     /*
     struct modem_socket *sock = &mdata.sockets[id];
