@@ -50,12 +50,14 @@ static struct modem_pin modem_pins[] = {
 
 #define MDM_POWER_ENABLE		1
 #define MDM_POWER_DISABLE		0
-#define MDM_RESET_NOT_ASSERTED		1
+#define MDM_RESET_NOT_ASSERTED  1
 #define MDM_RESET_ASSERTED		0
 
 #define MDM_CMD_TIMEOUT			    K_SECONDS(5)
+#define MDM_CLOSE_CMD_TIMEOUT	    K_SECONDS(1)
 #define MDM_CMD_SEND_TIMEOUT		K_SECONDS(10)
 #define MDM_CMD_READ_TIMEOUT		K_SECONDS(10)
+#define MDM_CMD_SEND_TIMEOUT		K_SECONDS(10)
 #define MDM_CMD_CONN_TIMEOUT		K_SECONDS(31)
 #define MDM_CMD_DNS_TIMEOUT			K_SECONDS(30)
 
@@ -74,7 +76,6 @@ static struct modem_pin modem_pins[] = {
 #define MDM_NETWORK_RETRY_COUNT		3
 #define MDM_WAIT_FOR_RSSI_COUNT		10
 #define MDM_WAIT_FOR_RSSI_DELAY		K_SECONDS(2)
-#define MDM_WAIT_FOR_POWER_DOWN		K_SECONDS(1)
 
 #define BUF_ALLOC_TIMEOUT K_SECONDS(1)
 
@@ -150,6 +151,9 @@ struct modem_data {
 
 	/* last DNS addr */
     char last_dns_addr[DNS_ADDR_LENGTH];
+    
+    /* last read socket_id */
+    int last_read_sock;
 };
 
 static struct modem_data mdata;
@@ -350,72 +354,37 @@ MODEM_CMD_DEFINE(on_cmd_sockwrite)
 	k_sem_give(&mdata.sem_response);
 }
 
-MODEM_CMD_DEFINE(on_cmd_socksend)
-{
-    struct modem_socket *sock = NULL;
-    k_sem_give(&sock->sem_data_ready);
-}
-
-MODEM_CMD_DEFINE(on_cmd_sockwrote)
-{
-    /*
-    struct modem_socket *sock = NULL;
-    k_sem_give(&sock->sem_write_ready);
-	k_sem_give(&mdata.sem_response);
-    */
-}
-
-/* Handler: ERROR */
-MODEM_CMD_DEFINE(on_cmd_sockexterror)
-{
-    /*
-    char value[8];
-	size_t out_len;
-
-	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
-	value[out_len] = 0;
-	mdata.last_error = -atoi(value);
-	LOG_ERR("+CME %d", mdata.last_error);
-	k_sem_give(&mdata.sem_response);
-    */
-}
-
 /* Handler: +QICLOSE: <socket_id> */
 /* Handler: +QIURC: "closed",<socket_id> */
 MODEM_CMD_DEFINE(on_cmd_socknotifyclose)
 {
-    /*
-	char value[2];
-	int id;
-
-	value[0] = net_buf_pull_u8(*buf);
-	len--;
-	value[1] = 0;
-
-	id = atoi(value);
-	if (id < MDM_BASE_SOCKET_NUM) {
+	struct modem_socket *sock;
+	sock = modem_socket_from_id(&mdata.socket_config,
+				    ATOI(argv[0], 0, "socket_id"));
+	if (!sock) {
 		return;
 	}
 
-    clean_socket(id);
-    */
+    LOG_WRN("noti close=%d", sock->id);
+	modem_socket_put(&mdata.socket_config, sock->sock_fd);
 }
 
 MODEM_CMD_DEFINE(on_cmd_socknotifydata)
 {
-    /*
-    char value[2];
-    struct modem_socket *sock = NULL;
-    int id;
+	int ret, socket_id, new_total;
+	struct modem_socket *sock;
 
-    value[0] = net_buf_pull_u8(*buf);
-    len--;
-    value[1] = 0;
+	socket_id = ATOI(argv[0], 0, "socket_id");
+	sock = modem_socket_from_id(&mdata.socket_config, socket_id);
+	if (!sock) {
+		return;
+	}
 
-    id = atoi(value);
-    sock = &mdata.sockets[id];
-    k_sem_give(&sock->sem_read_ready);
-    */
+    k_sem_give(&sock->sem_data_ready);
+    if (sock->is_polled) {
+        /* unblock poll() */
+        k_sem_give(&mdata.socket_config.sem_poll);
+    }
 }
 
 /* Handler: +QIURC: "dnsgip","<addr>" */
@@ -454,16 +423,26 @@ MODEM_CMD_DEFINE(on_cmd_write_ready)
     */
 }
 
-MODEM_CMD_DEFINE(on_cmd_read_ready)
+MODEM_CMD_DEFINE(on_cmd_sockread)
 {
-    /*
-	struct modem_socket *sock;
-	char buffer[10];
-	u16_t bytes_read, i = 0;
-    size_t out_len;
-	u8_t id, c = 0U;
+    LOG_WRN("QIRD Got %s=%d=%s", log_strdup(argv[0]));
+	struct modem_socket *sock = NULL;
+	struct socket_read_data *sock_data;
+	int ret, bytes_read,
+        read_len = ATOI(argv[0], 0, "read_len");
 
-	sock = &mdata.sockets[id];
+    /*
+    ret = mctx.iface.read(&mctx.iface, data->rx_buf,
+              data->read_buf_len, &bytes_read);
+
+    LOG_WRN("read uart ret=%d:%d", ret, bytes_read);
+    if (ret < 0 || bytes_read == 0) {
+        return;
+    }
+    */
+
+    LOG_WRN("read uart done");
+    /*
 
     out_len = net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
     buffer[out_len] = 0;
@@ -510,16 +489,8 @@ MODEM_CMD_DEFINE(on_cmd_read_ready)
 // Handle +CREG: 0,1
 MODEM_CMD_DEFINE(on_cmd_socknotifycreg)
 {
-    /*
-	char value[8];
-	size_t out_len;
-
-	out_len = net_buf_linearize(value, sizeof(value) - 1, *buf, 0, len);
-	value[out_len] = 0;
-	mdata.ev_creg = atoi(&value[2]);
-	mdata.ev_creg = (mdata.ev_creg == 1) || (mdata.ev_creg == 5) ? 1 : 0;
+	mdata.ev_creg = ATOI(argv[0], 0, "stat");
 	LOG_DBG("CREG:%d", mdata.ev_creg);
-    */
 }
 
 MODEM_CMD_DEFINE(on_cmd_socket_error)
@@ -634,11 +605,13 @@ restart:
 	/* stop RSSI delay work */
 	k_delayed_work_cancel(&mdata.rssi_query_work);
 
-    modem_cmd_send_nolock(&mctx.iface, &mctx.cmd_handler,
-                     NULL, 0, "AT+QPOWD", &mdata.sem_response,
-				     MDM_WAIT_FOR_POWER_DOWN);
-
-	pin_init();
+    ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
+                     NULL, 0, "AT+CFUN=1,1", &mdata.sem_response,
+				     MDM_CMD_TIMEOUT);
+    // Soft reset first or restart
+    if (ret != 0) {
+        pin_init();
+    } 
 
 	LOG_INF("Waiting for modem to respond");
 
@@ -737,6 +710,7 @@ static struct modem_cmd response_cmds[] = {
 /* UNSOLICITED Commands */
 static struct modem_cmd unsol_cmds[] = {
 	MODEM_CMD("+QICLOSE: ", on_cmd_socknotifyclose, 1U, ""),
+	MODEM_CMD("+QIURC: \"closed\",", on_cmd_socknotifyclose, 1U, ""),
 	MODEM_CMD("+QIURC: \"recv\",", on_cmd_socknotifydata, 1U, ""),
 	MODEM_CMD("+QIOPEN: ", on_cmd_sockcreate, 2U, ","),
 	MODEM_CMD("+QIURC: \"dnsgip\",\"", on_cmd_getaddr, 0U, ""),
@@ -840,7 +814,7 @@ static int ec20_socket(int family,int type, int proto)
 static int ec20_close(int sock_fd) {
     LOG_WRN("ec20_close");
 	struct modem_socket *sock;
-	char buf[sizeof("AT+QICLOSE=#")];
+	char buf[sizeof("AT+QICLOSE=##")];
 	int ret;
 
 	sock = modem_socket_from_fd(&mdata.socket_config, sock_fd);
@@ -857,7 +831,7 @@ static int ec20_close(int sock_fd) {
 	snprintk(buf, sizeof(buf), "AT+QICLOSE=%d", sock->id);
 	ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
 			     NULL, 0U, buf,
-			     &mdata.sem_response, MDM_CMD_TIMEOUT);
+			     &mdata.sem_response, MDM_CLOSE_CMD_TIMEOUT);
 	if (ret < 0) {
 		LOG_ERR("%s ret:%d", log_strdup(buf), ret);
 	}
@@ -899,7 +873,8 @@ static int ec20_connect(int sock_fd, const struct sockaddr *addr, socklen_t addr
 	} else if (addr->sa_family == AF_INET) {
 		dst_port = ntohs(net_sin(addr)->sin_port);
 	} else {
-		return -EPFNOSUPPORT;
+        ret = -EPFNOSUPPORT;
+        goto exit;
 	}
 
 	/* skip socket connect if UDP */
@@ -1017,45 +992,66 @@ static ssize_t ec20_send(int sock_fd, const void *buf, size_t len, int flags)
 	return ec20_sendto(sock_fd, buf, len, flags, NULL, 0U);
 }
 
-static ssize_t ec20_recv(int id, void *buf, size_t max_len, int flags) {
+static ssize_t ec20_recv(int sock_fd, void *buf, size_t max_len, int flags) {
     LOG_WRN("ec20_recv");
+	struct modem_socket *sock;
 	int ret;
-    /*
-    struct modem_socket *sock = &mdata.sockets[id];
-	char buffer_send[sizeof("AT+QIRD=#")];
+	struct modem_cmd cmd[] = {
+		MODEM_CMD("+QIRD: ", on_cmd_sockread, 1U, ""),
+	};
+	char sendbuf[sizeof("AT+QIRD=##")];
+	struct socket_read_data sock_data;
+
+    LOG_WRN("maxlen=%d", max_len);
+	if (!buf || max_len == 0) {
+		return -EINVAL;
+	}
 
 	if (max_len > MDM_MAX_BUF_LENGTH) {
 		return -EMSGSIZE;
 	}
 
-	if (!sock->data_ready) {
-		k_sem_take(&sock->sem_read_ready, MDM_CMD_READ_TIMEOUT);
+	sock = modem_socket_from_fd(&mdata.socket_config, sock_fd);
+    LOG_WRN("read sock=%d", sock->id);
+	if (!sock) {
+		LOG_ERR("Can't locate socket from fd:%d", sock_fd);
+		return -EINVAL;
 	}
-	//sock->data_ready = false;
-	k_sem_reset(&sock->sem_read_ready);
-	k_sem_reset(&mdata.sem_response);
-	sock->is_in_reading = true;
-	sock->p_recv_addr = buf;
-	sock->recv_max_len = max_len;
-	snprintf(buffer_send, sizeof(buffer_send), "AT+QIRD=%d", id);
-	ret = send_at_cmd(buffer_send, &sock->sem_read_ready, MDM_CMD_READ_TIMEOUT);
+
+	if (flags & MSG_PEEK) {
+		return -ENOTSUP;
+	} else if (flags & MSG_DONTWAIT && !sock->packet_sizes[0]) {
+		return 0;
+	}
+
+	if (!sock->packet_sizes[0]) {
+		k_sem_take(&sock->sem_data_ready, K_FOREVER);
+	}
+
+	snprintk(sendbuf, sizeof(sendbuf), "AT+QIRD=%d", sock->id);
+
+    LOG_WRN("read cmd=%s", log_strdup(sendbuf));
+	/* socket read settings */
+	(void)memset(&sock_data, 0, sizeof(sock_data));
+	sock_data.recv_buf = buf;
+	sock_data.recv_buf_len = max_len;
+	sock->data = &sock_data;
+
+    mdata.last_read_sock = sock->id;
+	ret = modem_cmd_send(&mctx.iface, &mctx.cmd_handler,
+			     cmd, ARRAY_SIZE(cmd), sendbuf, &mdata.sem_response,
+			     flags & MSG_DONTWAIT ? K_NO_WAIT :
+						    MDM_CMD_TIMEOUT);
 	if (ret < 0) {
-		LOG_ERR("Read request failed.");
-		goto error;
+		goto exit;
 	}
 
-	k_sem_take(&mdata.sem_response, MDM_CMD_READ_TIMEOUT);
+	ret = sock_data.recv_read_len;
 
-	return sock->bytes_read;
-error:
-	if (ret == -ETIMEDOUT) {
-		return -ETIMEDOUT;
-	} else {
-		return -EIO;
-	}
-    */
-
-    return ret;
+exit:
+	/* clear socket data */
+	sock->data = NULL;
+	return ret;
 }
 
 static ssize_t ec20_recvfrom(int id, void *buf, short int len,
