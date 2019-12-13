@@ -55,17 +55,16 @@ static struct modem_pin modem_pins[] = {
 
 #define MDM_CMD_TIMEOUT			    K_SECONDS(5)
 #define MDM_CLOSE_CMD_TIMEOUT	    K_SECONDS(1)
-#define MDM_CMD_SEND_TIMEOUT		K_SECONDS(10)
 #define MDM_CMD_READ_TIMEOUT		K_SECONDS(10)
 #define MDM_CMD_SEND_TIMEOUT		K_SECONDS(10)
 #define MDM_CMD_CONN_TIMEOUT		K_SECONDS(31)
 #define MDM_CMD_DNS_TIMEOUT			K_SECONDS(30)
 
 #define MDM_REGISTRATION_TIMEOUT	K_SECONDS(180)
-#define MDM_PROMPT_CMD_DELAY		K_MSEC(10)
+#define MDM_PROMPT_CMD_DELAY		K_MSEC(75)
 
-#define MDM_MAX_DATA_LENGTH		1460
 #define MDM_MAX_BUF_LENGTH		1460
+#define MDM_MAX_DATA_LENGTH		1460
 
 #define MDM_RECV_MAX_BUF		30
 #define MDM_RECV_BUF_SIZE		255
@@ -94,8 +93,6 @@ static struct modem_pin modem_pins[] = {
 NET_BUF_POOL_DEFINE(mdm_recv_pool, MDM_RECV_MAX_BUF, MDM_RECV_BUF_SIZE,
 		    0, NULL);
 
-static u8_t mdm_recv_buf[MDM_MAX_DATA_LENGTH];
-
 /* RX thread structures */
 K_THREAD_STACK_DEFINE(modem_rx_stack,
 		       CONFIG_MODEM_EC20_RX_STACK_SIZE);
@@ -105,8 +102,6 @@ struct k_thread modem_rx_thread;
 K_THREAD_STACK_DEFINE(modem_workq_stack,
 		      CONFIG_MODEM_EC20_RX_WORKQ_STACK_SIZE);
 static struct k_work_q modem_workq;
-
-static u8_t mdm_ok = 0;
 
 /* socket read callback data */
 struct socket_read_data {
@@ -369,6 +364,7 @@ MODEM_CMD_DEFINE(on_cmd_socknotifyclose)
 	modem_socket_put(&mdata.socket_config, sock->sock_fd);
 }
 
+/* Handler: +QIURC: "recv",<socket_id> */
 MODEM_CMD_DEFINE(on_cmd_socknotifydata)
 {
 	int ret, socket_id, new_total;
@@ -399,43 +395,40 @@ MODEM_CMD_DEFINE(on_cmd_getaddr)
 	LOG_INF("Resolve addr: %s", log_strdup(mdata.last_dns_addr));
 }
 
-MODEM_CMD_DEFINE(on_cmd_write_ready)
+MODEM_CMD_DEFINE(on_cmd_sockread1)
 {
-    /*
-	struct modem_socket *socket;
-	size_t out_len;
-	char buffer[20];
-	char *temp[2];
-	u8_t id;
-
-	out_len = net_buf_linearize(buffer, sizeof(buffer) - 1, *buf, 0, len);
-	buffer[out_len] = 0;
-	id = atoi(strtok(buffer, ","));
-	socket = &mdata.sockets[id];
-	temp[0] = strtok(NULL, ",");
-	temp[1] = strtok(NULL, ",");
-	if (temp[1] == NULL) {
-		LOG_DBG("Write ready.");
-	} else {
-		LOG_DBG("Write data accept ready.");
-	}
-	k_sem_give(&socket->sem_data_ready);
-    */
+    LOG_WRN("Qread1 %s", log_strdup(argv[0]));
 }
 
 MODEM_CMD_DEFINE(on_cmd_sockread)
 {
-    LOG_WRN("QIRD Got %s=%d=%s", log_strdup(argv[0]));
+    LOG_WRN("QIRD Got %s", log_strdup(argv[0]));
+
 	struct modem_socket *sock = NULL;
 	struct socket_read_data *sock_data;
 	int ret, bytes_read,
+        socket_id = mdata.last_read_sock,
         read_len = ATOI(argv[0], 0, "read_len");
 
-    /*
-    ret = mctx.iface.read(&mctx.iface, data->rx_buf,
-              data->read_buf_len, &bytes_read);
+    // TODO: check socket_id
+	sock = modem_socket_from_id(&mdata.socket_config, socket_id);
+	if (!sock) {
+		LOG_ERR("Socket not found! (%d)", socket_id);
+		return;
+	}
+
+	sock_data = (struct socket_read_data *)sock->data;
+	if (!sock_data) {
+		LOG_ERR("Socket data not found! Skip handling (%d)", socket_id);
+		return;
+	}
+
+    ret = mctx.iface.read(&mctx.iface, sock_data->recv_buf,
+              sock_data->recv_buf_len, &bytes_read);
 
     LOG_WRN("read uart ret=%d:%d", ret, bytes_read);
+
+    /*
     if (ret < 0 || bytes_read == 0) {
         return;
     }
@@ -515,7 +508,6 @@ static void modem_rx(void)
 	while (true) {
 		/* wait for incoming data */
 		k_sem_take(&mdata.iface_data.rx_sem, K_FOREVER);
-
 		mctx.cmd_handler.process(&mctx.cmd_handler, &mctx.iface);
 
 		/* give up time if we have a solid stream of data */
@@ -527,7 +519,6 @@ static int pin_init(void)
 {
 	LOG_INF("Setting Modem Pins");
 
-    mdm_ok = 0;
 	LOG_DBG("MDM_RESET_PIN -> NOT_ASSERTED");
 	modem_pin_write(&mctx, MDM_RESET, MDM_RESET_NOT_ASSERTED);
 
@@ -555,7 +546,6 @@ static int pin_init(void)
 
 	modem_pin_config(&mctx, MDM_POWER, GPIO_DIR_IN);
 
-    mdm_ok = 1;
 	LOG_INF("... Done!");
 
 	return 0;
@@ -998,11 +988,11 @@ static ssize_t ec20_recv(int sock_fd, void *buf, size_t max_len, int flags) {
 	int ret;
 	struct modem_cmd cmd[] = {
 		MODEM_CMD("+QIRD: ", on_cmd_sockread, 1U, ""),
+		MODEM_CMD("", on_cmd_sockread1, 1U, ""),
 	};
 	char sendbuf[sizeof("AT+QIRD=##")];
 	struct socket_read_data sock_data;
 
-    LOG_WRN("maxlen=%d", max_len);
 	if (!buf || max_len == 0) {
 		return -EINVAL;
 	}
@@ -1012,7 +1002,6 @@ static ssize_t ec20_recv(int sock_fd, void *buf, size_t max_len, int flags) {
 	}
 
 	sock = modem_socket_from_fd(&mdata.socket_config, sock_fd);
-    LOG_WRN("read sock=%d", sock->id);
 	if (!sock) {
 		LOG_ERR("Can't locate socket from fd:%d", sock_fd);
 		return -EINVAL;
@@ -1030,7 +1019,6 @@ static ssize_t ec20_recv(int sock_fd, void *buf, size_t max_len, int flags) {
 
 	snprintk(sendbuf, sizeof(sendbuf), "AT+QIRD=%d", sock->id);
 
-    LOG_WRN("read cmd=%s", log_strdup(sendbuf));
 	/* socket read settings */
 	(void)memset(&sock_data, 0, sizeof(sock_data));
 	sock_data.recv_buf = buf;
