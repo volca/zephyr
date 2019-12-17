@@ -388,24 +388,27 @@ MODEM_CMD_DEFINE(on_cmd_sockdata)
     LOG_WRN("read-%d", strlen(sock_data->recv_buf));
     if (strlen(sock_data->recv_buf) >= sock->packet_sizes[0]) {
 		sock_data->recv_read_len = strlen(sock_data->recv_buf);
-		/* unblock sockets waiting on recv() */
-		k_sem_give(&sock->sem_data_ready);
-		if (sock->is_polled) {
-			/* unblock poll() */
-			k_sem_give(&mdata.socket_config.sem_poll);
-		}
+        int ret = modem_socket_packet_size_update(&mdata.socket_config, sock,
+                              -sock_data->recv_read_len);
+        if (ret > 0) {
+            /* unblock sockets waiting on recv() */
+            k_sem_give(&sock->sem_data_ready);
+            if (sock->is_polled) {
+                /* unblock poll() */
+                k_sem_give(&mdata.socket_config.sem_poll);
+            }
+        }
 	}
 }
 
 MODEM_CMD_DEFINE(on_cmd_sockread)
 {
-    LOG_WRN("QIRD Got %s", log_strdup(argv[0]));
-
 	struct modem_socket *sock = NULL;
 	int ret, bytes_read,
         socket_id = mdata.last_read_sock,
         new_total = ATOI(argv[0], 0, "new_total");
 
+    LOG_WRN("QIRD Got %s last %d", log_strdup(argv[0]), mdata.last_read_sock);
     // TODO: check socket_id
 	sock = modem_socket_from_id(&mdata.socket_config, socket_id);
 	if (!sock) {
@@ -413,56 +416,8 @@ MODEM_CMD_DEFINE(on_cmd_sockread)
 		return;
 	}
 
-    /*
-    if (ret < 0 || bytes_read == 0) {
-        return;
-    }
-    */
-
 	ret = modem_socket_packet_size_update(&mdata.socket_config, sock,
 					      new_total);
-    /*
-
-    out_len = net_buf_linearize(buffer, sizeof(buffer), *buf, 0, len);
-    buffer[out_len] = 0;
-    bytes_read = atoi(buffer);
-    LOG_DBG("Reported %d bytes to be read. len: %d %s", bytes_read, len, log_strdup(buffer));
-
-    while (i < len) {
-        i++;
-        net_buf_pull_u8(*buf);
-    }
-
-    i = 0;
-    size_t bytes_skip = 0;
-    while (i < bytes_read + 2) {
-        if (!(*buf)->len) {
-			*buf = net_buf_frag_del(NULL, *buf);
-		}
-
-        modem_read_rx(buf);
-        if (*buf) {
-            out_len = (*buf)->len;
-            while (out_len) {
-                out_len--;
-                c = net_buf_pull_u8(*buf);
-                if (bytes_skip < 2) {
-                    bytes_skip++;
-                    continue;
-                } else {
-                    sock->p_recv_addr[i] = c;
-                }
-                i++;
-            }
-        }
-        k_yield();
-    }
-    sock->p_recv_addr[bytes_read] = 0;
-
-    sock->bytes_read = bytes_read;
-    sock->is_in_reading = false;
-	k_sem_give(&sock->sem_read_ready);
-    */
 }
 
 // Handle +CREG: 0,1
@@ -470,22 +425,6 @@ MODEM_CMD_DEFINE(on_cmd_socknotifycreg)
 {
 	mdata.ev_creg = ATOI(argv[0], 0, "stat");
 	LOG_DBG("CREG:%d", mdata.ev_creg);
-}
-
-MODEM_CMD_DEFINE(on_cmd_socket_error)
-{
-    /*
-	char buffer[10];
-	size_t out_len;
-
-	out_len = net_buf_linearize(buffer, sizeof(buffer) - 1, *buf, 0, len);
-	buffer[out_len] = 0;
-	strtok(buffer, ",");
-	strtok(buffer, ",");
-	mdata.last_error = -atoi(strtok(buffer, ","));
-	LOG_ERR("+CME %d", mdata.last_error);
-	k_sem_give(&mdata.sem_response);
-    */
 }
 
 /* RX thread */
@@ -909,6 +848,7 @@ static int send_socket_data(struct modem_socket *sock,
 				    NULL, 0U, send_buf, NULL, K_NO_WAIT);
 
 	if (ret < 0) {
+        LOG_INF("SEND error here");
 		goto exit;
 	}
 
@@ -919,7 +859,7 @@ static int send_socket_data(struct modem_socket *sock,
 		goto exit;
 	}
 
-	/* slight pause per spec so that @ prompt is received */
+	/* slight pause per spec ro that > prompt is received */
 	k_sleep(MDM_PROMPT_CMD_DELAY);
 	mctx.iface.write(&mctx.iface, buf, buf_len);
 
@@ -1005,6 +945,7 @@ static ssize_t ec20_recv(int sock_fd, void *buf, size_t max_len, int flags) {
 		return 0;
 	}
 
+    LOG_WRN("take packet size=%d", sock->packet_sizes[0]);
 	if (!sock->packet_sizes[0]) {
 		k_sem_take(&sock->sem_data_ready, K_FOREVER);
 	}
@@ -1013,6 +954,8 @@ static ssize_t ec20_recv(int sock_fd, void *buf, size_t max_len, int flags) {
 
 	/* socket read settings */
 	(void)memset(&sock_data, 0, sizeof(sock_data));
+	(void)memset(buf, 0, sizeof(buf));
+
 	sock_data.recv_buf = buf;
 	sock_data.recv_buf_len = max_len;
 	sock->data = &sock_data;
